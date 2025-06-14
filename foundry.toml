@@ -8,4 +8,12 @@ remappings = [
     "@chainlink/contracts-ccip/=lib/chainlink-ccip/chains/evm/",
 ]
 
+[rpc_endpoints]
+holesky = "${HOLESKY_RPC_URL}"
+base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
+
+[etherscan]
+holesky = { key = "${ETHERSCAN_API_KEY}" }
+base_sepolia = { key = "${BASESCAN_API_KEY}" }
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
