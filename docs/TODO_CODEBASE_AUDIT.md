@@ -65,7 +65,7 @@ coverage 0% menegaskan bahwa seluruh jalur error belum diuji.
 
 - Buat operasi terpisah:
   - `registerDocument(...)` untuk membuat canonical record satu kali.
-  - `dispatchDocument(documentId, destinationChainSelector)` untuk setiap lane.
+  - `dispatchDocument(documentId, destinationChainSelector, maximumFee)` untuk setiap lane.
 - Ganti flag global menjadi state per dokumen dan per chain, misalnya:
   - `DocumentRecord` untuk canonical metadata.
   - `mapping(documentId => mapping(chainSelector => DispatchRecord))`.
@@ -286,12 +286,25 @@ status dan return data CCIP adalah bukti gagal yang persisten.
 - Tambahkan runbook untuk manual execution, retry, pause, dan incident response.
 - Uji receiver yang sengaja gagal, kemudian recovery tanpa duplicate state.
 
-### [ ] P1-05 Amankan fee approval dan pengelolaan dana
+### [x] P1-05 Amankan fee approval dan pengelolaan dana
 
-**Bukti:** `src/EtherdocSender.sol:80-87`.
+**Bukti terkini:** bukti awal masih relevan untuk approval dan withdrawal, tetapi Router serta LINK
+sebenarnya sudah `immutable`. Sender sekarang memakai `SafeERC20.forceApprove`, membaca balance satu
+kali, dan mewajibkan `maximumFee` pada setiap `dispatchDocument`. `quoteFee` membangun pesan yang sama
+dengan dispatch sehingga orchestrator dapat menetapkan batas, sementara kenaikan fee antara quote
+dan mining menghasilkan `FeeExceedsMaximum` tanpa menulis dispatch record.
 
-Return value `LINK.approve` tidak diperiksa dan contract tidak memiliki fungsi withdrawal/rescue.
-LINK yang dikirim berlebih dapat terkunci permanen.
+Model biaya yang dipilih adalah treasury-funded LINK; contract tidak menarik dana dari issuer atau
+relayer dan native fee belum didukung. `withdrawToken` dapat mengembalikan LINK berlebih atau rescue
+ERC-20 lain, hanya dapat dipanggil owner, menolak zero token/recipient, memakai `safeTransfer`, dan
+memancarkan `TokenWithdrawn`. README mendokumentasikan funding, slippage/toleransi, race quote dengan
+mining, requote, dan withdrawal.
+
+Test `EtherdocSenderTest.test_quoteFeeAndMaximumProtectAgainstFeeIncrease` mencakup fee race dan
+max-fee guard. Test mock juga mencakup balance tidak cukup, token yang mensyaratkan reset allowance,
+approval gagal, transfer gagal, otorisasi withdrawal, validasi alamat, dan event. Penambahan ini
+awalnya melewati EIP-170 karena sender sebelumnya hanya memiliki margin 851 byte; optimizer Solidity
+diaktifkan eksplisit dengan 200 runs dan ukuran deployment kembali diverifikasi.
 
 **TODO:**
 
@@ -399,13 +412,15 @@ interface baru. Jangan mengubah dependency lalu menganggap kontrak lama setara.
 
 ### [ ] P1-10 Pin compiler, EVM target, optimizer, dan Foundry secara eksplisit
 
-**Bukti:** `foundry.toml` tidak menetapkan optimizer atau EVM version. EVM target efektif bergantung
-pada versi Foundry; pada mesin review terbaca `prague`. CI menggunakan floating Foundry stable melalui
-`foundry-rs/foundry-toolchain@v1`.
+**Bukti terkini:** `foundry.toml` sudah mengaktifkan optimizer dengan 200 runs untuk menjaga ukuran
+sender hasil P1-05 di bawah EIP-170, tetapi belum menetapkan compiler atau EVM version. EVM target
+efektif masih bergantung pada versi Foundry; pada mesin review awal terbaca `prague`. CI menggunakan
+floating Foundry stable melalui `foundry-rs/foundry-toolchain@v1`.
 
 **TODO:**
 
-- Tetapkan `solc_version`, `evm_version`, `optimizer`, dan `optimizer_runs`.
+- Tetapkan `solc_version` dan `evm_version`; review serta pertahankan nilai `optimizer` dan
+  `optimizer_runs` secara eksplisit.
 - Pin Foundry CI ke release exact dan pin GitHub Action ke full commit SHA.
 - Samakan versi developer lokal dan CI, misalnya melalui dokumentasi/tool version file.
 - Tambahkan `[profile.ci]` yang nyata atau hapus `FOUNDRY_PROFILE=ci` yang menyesatkan.
