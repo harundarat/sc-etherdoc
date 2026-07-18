@@ -80,3 +80,65 @@ forge build
 forge test
 forge fmt --check
 ```
+
+## Network configuration and deployment
+
+Deployment scripts do not contain network addresses or chain selectors. They load one
+`NetworkConfig` per chain from `NETWORK_CONFIG_PATH` and load generated Etherdoc addresses from
+`DEPLOYMENT_DIR/<network>.json`. The checked-in testnet example uses the Ethereum Sepolia ↔ Base
+Sepolia lane and LINK fee payment.
+
+The lane and Router/LINK values in `config/networks/testnet.json` were last verified on
+**2026-07-18** against the official CCIP Directory:
+
+- [Ethereum Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia)
+- [Base Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia-base-1)
+
+CCIP network support can change. Recheck both Directory pages and update `directoryVerifiedAt`
+before a production-like deployment.
+
+Copy `.env-example` to `.env`, provide both RPC URLs, and load it into the shell. Deploy and
+configure are deliberately separate:
+
+```shell
+set -a
+source .env
+set +a
+
+# Destination deployment
+NETWORK=baseSepolia forge script script/EtherdocReceiverScript.s.sol \
+  --target-contract EtherdocReceiverScript \
+  --rpc-url base_sepolia --broadcast
+
+# Source deployment
+NETWORK=ethereumSepolia forge script script/EtherdocSenderScript.s.sol \
+  --target-contract EtherdocSenderScript \
+  --rpc-url ethereum_sepolia --broadcast
+
+# Configure the destination to accept the source deployment
+SOURCE_NETWORK=ethereumSepolia DESTINATION_NETWORK=baseSepolia \
+  forge script script/ConfigureEtherdocReceiver.s.sol \
+  --target-contract ConfigureEtherdocReceiverScript \
+  --rpc-url base_sepolia --broadcast
+
+# Configure the source lane and destination receiver
+SOURCE_NETWORK=ethereumSepolia DESTINATION_NETWORK=baseSepolia \
+  forge script script/ConfigureEtherdocSender.s.sol \
+  --target-contract ConfigureEtherdocSenderScript \
+  --rpc-url ethereum_sepolia --broadcast
+```
+
+Successful broadcast runs write generated address books under `deployments/testnet/`; dry-runs do
+not write deployment addresses. The configure scripts require those artifacts.
+
+Every deploy/configure command performs preflight validation before broadcasting:
+
+- the connected RPC chain ID must match its config;
+- the local Router, LINK token when required, and Etherdoc deployment must have bytecode;
+- the source Router must report the destination selector as supported;
+- remote Router, sender, and receiver bytecode is checked through the configured remote RPC alias;
+- the configured destination gas limit must match the sender contract;
+- missing deployment artifacts and unsupported fee modes fail with explicit custom errors.
+
+The current sender pays fees in LINK. Setting `feeMode` to `NATIVE` is rejected until native fee
+payment is implemented in the contract.
