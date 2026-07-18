@@ -202,9 +202,9 @@ diaktifkan, kombinasi silang semuanya ikut lolos walaupun hanya pasangan tertent
 
 ### [x] P1-02 Bind destination chain ke receiver yang dikonfigurasi
 
-**Bukti terkini:** `src/EtherdocSender.sol:42-46`, `119`, `241-303`, dan `305-361`;
-`script/ConfigureEtherdocSender.s.sol:13-24`; serta `test/EtherdocSender.t.sol:110-140` dan
-`177-227`.
+**Bukti terkini:** `src/EtherdocSender.sol:49-53`, `140`, `297-346`, dan `398-421`;
+`script/ConfigureEtherdocSender.s.sol:13-24`; serta `test/EtherdocSender.t.sol:142-177` dan
+`322-359`.
 
 Bukti awal sudah stale karena refactor P0 sebelumnya telah menghapus parameter receiver dari
 `dispatchDocument`, tetapi gas limit masih berupa konstanta global dan binding tersebut belum diuji
@@ -212,12 +212,12 @@ secara langsung. Implementasi sekarang menyimpan `RemoteConfig` atomic berisi re
 dan status allowlist untuk setiap selector. Dispatch hanya membaca config tersebut, menyimpan
 receiver/gas limit yang dipakai ke record, dan memancarkannya pada event.
 
-Rotasi dilakukan eksplisit melalui fungsi owner-only `configureRemote` dan event
+Rotasi dilakukan eksplisit melalui fungsi governance-only `configureRemote` dan event
 `RemoteConfigUpdated`; zero selector, zero receiver, serta zero gas limit ditolak. Script konfigurasi
 memvalidasi bytecode receiver melalui RPC destination sebelum mengirim perubahan config. Validasi ini
-hanya snapshot saat konfigurasi karena bytecode destination tetap dapat berubah sesudahnya. Timelock
-tidak ditambahkan ke single-owner contract saat ini; kebutuhan governance production tetap dicakup
-P1-06.
+hanya snapshot saat konfigurasi karena bytecode destination tetap dapat berubah sesudahnya.
+Governance production dan pemisahan role dicakup P1-06; timelock tetap tidak ditambahkan karena
+kontrak sengaja non-upgradeable dan perubahan config sudah melalui multisig.
 
 **TODO:**
 
@@ -296,9 +296,9 @@ dan mining menghasilkan `FeeExceedsMaximum` tanpa menulis dispatch record.
 
 Model biaya yang dipilih adalah treasury-funded LINK; contract tidak menarik dana dari issuer atau
 relayer dan native fee belum didukung. `withdrawToken` dapat mengembalikan LINK berlebih atau rescue
-ERC-20 lain, hanya dapat dipanggil owner, menolak zero token/recipient, memakai `safeTransfer`, dan
-memancarkan `TokenWithdrawn`. README mendokumentasikan funding, slippage/toleransi, race quote dengan
-mining, requote, dan withdrawal.
+ERC-20 lain, hanya dapat dipanggil governance, menolak zero token/recipient, memakai `safeTransfer`,
+dan memancarkan `TokenWithdrawn`. README mendokumentasikan funding, slippage/toleransi, race quote
+dengan mining, requote, dan withdrawal.
 
 Test `EtherdocSenderTest.test_quoteFeeAndMaximumProtectAgainstFeeIncrease` mencakup fee race dan
 max-fee guard. Test mock juga mencakup balance tidak cukup, token yang mensyaratkan reset allowance,
@@ -312,16 +312,41 @@ diaktifkan eksplisit dengan 200 runs dan ukuran deployment kembali diverifikasi.
   dipilih.
 - Jadikan Router dan fee token immutable jika memang tidak dapat diubah.
 - Tambahkan `quoteFee` agar caller/orchestrator dapat memperkirakan biaya.
-- Tambahkan owner-only withdrawal/rescue dengan event dan zero-address validation.
+- Tambahkan governance-only withdrawal/rescue dengan event dan zero-address validation.
 - Putuskan model biaya: treasury-funded LINK, native fee, atau user-funded; dokumentasikan slippage
   fee dan race antara quote dan mining.
 - Cache hasil `balanceOf` dan cek approval/transfer failure pada test mock.
 - Pertimbangkan batas fee maksimum dari caller agar dispatch tidak membayar fee yang melonjak tanpa
   batas.
 
-### [ ] P1-06 Ganti single hot-key owner dengan model issuer/governance yang sesuai
+### [x] P1-06 Ganti single hot-key owner dengan model issuer/governance yang sesuai
 
-**Bukti:** semua operasi penting memakai `OwnerIsCreator`.
+**Bukti terkini:** bukti awal sudah stale. `OwnerIsCreator` telah diganti dengan
+`EtherdocGovernance` berbasis `ConfirmedOwner`, sehingga alamat governance diberikan eksplisit pada
+constructor dan rotasi berikutnya tetap memakai `transferOwnership` + `acceptOwnership`.
+`src/EtherdocGovernance.sol:10-47`, `src/EtherdocSender.sol:146-177` dan `297-300`, serta
+`src/EtherdocReceiver.sol:76-113`.
+
+Governance production ditetapkan sebagai multisig dan hanya governance yang dapat mengubah issuer,
+operator/pauser, remote config, treasury, atau melakukan unpause. Issuer tetap registry terpisah;
+`OPERATOR_ROLE` hanya melakukan dispatch; `PAUSER_ROLE` hanya dapat menghentikan registration,
+dispatch, atau receive. Relayer sengaja permissionless tanpa privileged role karena setiap operasi
+relayed tetap memerlukan signature EIP-712 issuer. Constructor deployment menerima governance,
+issuer, operator, dan pauser secara eksplisit sehingga broadcaster tidak otomatis memperoleh
+otoritas. `script/EtherdocSenderScript.s.sol:13-32`,
+`script/EtherdocReceiverScript.s.sol:13-27`, dan `docs/GOVERNANCE_RUNBOOK.md`.
+
+Pause registration mencakup registration langsung/signed dan supersession, tetapi revocation tetap
+tersedia sebagai jalur invalidasi darurat. Pause dispatch mencegah message baru. Pause receive
+membuat eksekusi CCIP revert tanpa receipt/processed marker sehingga message ID yang sama dapat
+di-retry. Kebijakan recovery mewajibkan governance multisig melakukan unpause setelah incident
+review, dengan receive dibuka sebelum dispatch. Test role, zero account, two-step ownership,
+pause/unpause, pembatasan pauser, dan retry receiver tercakup di
+`test/EtherdocSender.t.sol:179-283` dan `test/EtherdocLifecycle.t.sol:229-267`.
+
+Proxy tidak ditambahkan. Kebijakan yang dipilih adalah immutable deployment, lalu redeploy dan rotasi
+remote eksplisit jika logic berubah. Timelock dapat dievaluasi terpisah bila cadence perubahan
+governance membutuhkannya.
 
 **TODO:**
 
@@ -593,8 +618,8 @@ rotation yang eksplisit.
 
 - [ ] Pilih ACK vs indexer reconciliation.
 - [ ] Implementasikan failure/retry strategy.
-- [ ] Tambahkan fee quote, max fee, withdrawal, pause, dan events.
-- [ ] Migrasikan owner production ke multisig/roles.
+- [x] Tambahkan fee quote, max fee, withdrawal, pause, dan events.
+- [x] Migrasikan owner production ke multisig/roles.
 
 ### Milestone 3 — Test dan config
 
