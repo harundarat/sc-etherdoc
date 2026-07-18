@@ -100,10 +100,13 @@ contract EtherdocLifecycleTest is Test {
     }
 
     function test_failedDestinationExecutionCanRetrySameMessage() external {
-        s_receiverA.allowListSourceChain(s_router.SOURCE_CHAIN_SELECTOR(), true);
         bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
 
-        vm.expectRevert(EtherdocReceiver.SenderNotAllowlisted.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EtherdocReceiver.UntrustedRemote.selector, s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender)
+            )
+        );
         s_router.deliver(messageId);
 
         EtherdocSender.DispatchRecord memory dispatch = s_sender.getDispatch(s_documentId, DESTINATION_A);
@@ -112,7 +115,7 @@ contract EtherdocLifecycleTest is Test {
         assertEq(uint8(dispatch.status), uint8(EtherdocSender.DispatchStatus.DISPATCHED));
         assertEq(uint8(failedReceipt.status), uint8(EtherdocReceiver.ReceiptStatus.NOT_RECEIVED));
 
-        s_receiverA.allowlistSender(address(s_sender), true);
+        s_receiverA.configureTrustedRemote(s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender), true);
         vm.warp(block.timestamp + 15);
         s_router.deliver(messageId);
 
@@ -183,7 +186,6 @@ contract EtherdocLifecycleTest is Test {
     }
 
     function _allowReceiver(EtherdocReceiver _receiver) private {
-        _receiver.allowListSourceChain(s_router.SOURCE_CHAIN_SELECTOR(), true);
-        _receiver.allowlistSender(address(s_sender), true);
+        _receiver.configureTrustedRemote(s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender), true);
     }
 }

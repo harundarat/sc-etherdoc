@@ -21,8 +21,9 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
         EtherdocTypes.DocumentRecord document;
     }
 
-    error SourceChainNotAllowlisted(uint64 sourceChainSelector);
-    error SenderNotAllowlisted();
+    error InvalidSourceChainSelector(uint64 sourceChainSelector);
+    error InvalidRemoteSender(address sender);
+    error UntrustedRemote(uint64 sourceChainSelector, address sender);
     error InvalidDocumentSchema(uint16 schemaVersion);
     error InvalidDocumentCommitment(bytes32 documentId);
     error InvalidDocumentVersion(bytes32 documentId);
@@ -38,19 +39,23 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
         EtherdocTypes.DocumentStatus documentStatus,
         uint64 receivedAt
     );
+    event TrustedRemoteConfigured(uint64 indexed sourceChainSelector, address indexed sender, bool trusted);
 
     mapping(bytes32 documentId => ReceiptRecord receipt) private s_receipts;
-    mapping(uint64 sourceChainSelector => bool allowlisted) private s_allowlistedSourceChains;
-    mapping(address sender => bool allowlisted) private s_allowlistedSenders;
+    mapping(uint64 sourceChainSelector => mapping(address sender => bool trusted)) private s_trustedRemotes;
 
     constructor(address _router) CCIPReceiver(_router) {}
 
-    function allowlistSender(address _sender, bool _allowlisted) external onlyOwner {
-        s_allowlistedSenders[_sender] = _allowlisted;
-    }
+    function configureTrustedRemote(uint64 _sourceChainSelector, address _sender, bool _trusted) external onlyOwner {
+        if (_sourceChainSelector == 0) {
+            revert InvalidSourceChainSelector(_sourceChainSelector);
+        }
+        if (_sender == address(0)) {
+            revert InvalidRemoteSender(_sender);
+        }
 
-    function allowListSourceChain(uint64 _sourceChainSelector, bool _allowlisted) external onlyOwner {
-        s_allowlistedSourceChains[_sourceChainSelector] = _allowlisted;
+        s_trustedRemotes[_sourceChainSelector][_sender] = _trusted;
+        emit TrustedRemoteConfigured(_sourceChainSelector, _sender, _trusted);
     }
 
     /**
@@ -59,8 +64,7 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
      * @param message The CCIP message containing document data from another chain
      *
      * Requirements:
-     * - Source chain must be allowlisted
-     * - Sender address must be allowlisted
+     * - The source chain and sender pair must be trusted
      *
      * @custom:security Only processes messages from verified sources
      * @custom:storage Writes a destination-side receipt keyed by the canonical document identifier
@@ -69,17 +73,12 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
      * - MessageReceived event with message details
      *
      * Reverts:
-     * - SourceChainNotAllowlisted if source chain is not in allowlist
-     * - SenderNotAllowlisted if sender is not in allowlist
+     * - UntrustedRemote if the source chain and sender pair is not trusted
      */
     function _ccipReceive(Client.Any2EVMMessage memory message) internal virtual override {
-        if (!s_allowlistedSourceChains[message.sourceChainSelector]) {
-            revert SourceChainNotAllowlisted(message.sourceChainSelector);
-        }
-
         address sender = abi.decode(message.sender, (address));
-        if (!s_allowlistedSenders[sender]) {
-            revert SenderNotAllowlisted();
+        if (!s_trustedRemotes[message.sourceChainSelector][sender]) {
+            revert UntrustedRemote(message.sourceChainSelector, sender);
         }
 
         EtherdocTypes.DocumentRecord memory document = abi.decode(message.data, (EtherdocTypes.DocumentRecord));
@@ -121,6 +120,10 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
      */
     function getReceipt(bytes32 _documentId) external view returns (ReceiptRecord memory) {
         return s_receipts[_documentId];
+    }
+
+    function isTrustedRemote(uint64 _sourceChainSelector, address _sender) external view returns (bool) {
+        return s_trustedRemotes[_sourceChainSelector][_sender];
     }
 
     function isDocumentReceived(bytes32 _documentId) external view returns (bool) {

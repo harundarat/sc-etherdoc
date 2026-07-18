@@ -21,8 +21,7 @@ contract ConfigureEtherdocReceiverScript is NetworkConfigScript {
         EtherdocReceiver receiver = EtherdocReceiver(destination.receiver);
 
         vm.startBroadcast();
-        receiver.allowlistSender(source.sender, true);
-        receiver.allowListSourceChain(source.chainSelector, true);
+        receiver.configureTrustedRemote(source.chainSelector, source.sender, true);
         vm.stopBroadcast();
 
         console.log("Configured EtherdocReceiver:", destination.receiver);

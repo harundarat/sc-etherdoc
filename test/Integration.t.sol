@@ -26,8 +26,7 @@ contract Integration is Test {
         etherdocReceiver = new EtherdocReceiver(address(destinationRouter));
 
         etherdocSender.configureDestinationChain(destinationChainSelector, address(etherdocReceiver), true);
-        etherdocReceiver.allowListSourceChain(chainSelector, true);
-        etherdocReceiver.allowlistSender(address(etherdocSender), true);
+        etherdocReceiver.configureTrustedRemote(chainSelector, address(etherdocSender), true);
     }
 
     function test_sendAndReceiveCrossChainMessagePayFeesInLink() external {
