@@ -113,7 +113,7 @@ dan tersedia untuk manual execution.
 - Setiap destination memiliki status dan transaction/message reference.
 - Skenario pending, failed, retry, dan complete memiliki test.
 
-### [ ] P0-03 Definisikan arti "keaslian dokumen" dan simpan provenance yang cukup
+### [x] P0-03 Definisikan arti "keaslian dokumen" dan simpan provenance yang cukup
 
 **Bukti:** kedua kontrak hanya menyimpan `mapping(string => bool)`.
 
