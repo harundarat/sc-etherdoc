@@ -184,7 +184,7 @@ Router, LINK token, selector, receiver, dan deployed sender langsung di source c
 
 ## P1 — Security, Recovery, dan Data Integrity
 
-### [ ] P1-01 Allowlist pasangan `(sourceChainSelector, sender)`, bukan dua daftar independen
+### [x] P1-01 Allowlist pasangan `(sourceChainSelector, sender)`, bukan dua daftar independen
 
 **Bukti:** `src/EtherdocReceiver.sol:17-18` dan `49-55`.
 
@@ -532,7 +532,7 @@ rotation yang eksplisit.
 - [ ] Implementasikan structured document record.
 - [ ] Pisahkan register dan dispatch.
 - [ ] Tambahkan state per destination dan retry.
-- [ ] Implementasikan trusted remote pair.
+- [x] Implementasikan trusted remote pair.
 
 ### Milestone 2 — Recovery dan operasional
 
