@@ -44,13 +44,21 @@ contract DeferredRouter is IRouterClient {
     }
 
     function deliver(bytes32 _messageId) external {
+        _deliverAs(_messageId, SOURCE_CHAIN_SELECTOR, s_messages[_messageId].sender);
+    }
+
+    function deliverAs(bytes32 _messageId, uint64 _sourceChainSelector, address _sender) external {
+        _deliverAs(_messageId, _sourceChainSelector, _sender);
+    }
+
+    function _deliverAs(bytes32 _messageId, uint64 _sourceChainSelector, address _sender) private {
         QueuedMessage storage queuedMessage = s_messages[_messageId];
         require(queuedMessage.exists, "message not queued");
 
         Client.Any2EVMMessage memory message = Client.Any2EVMMessage({
             messageId: _messageId,
-            sourceChainSelector: SOURCE_CHAIN_SELECTOR,
-            sender: abi.encode(queuedMessage.sender),
+            sourceChainSelector: _sourceChainSelector,
+            sender: abi.encode(_sender),
             data: queuedMessage.data,
             destTokenAmounts: new Client.EVMTokenAmount[](0)
         });
@@ -185,7 +193,66 @@ contract EtherdocLifecycleTest is Test {
         assertEq(uint8(receiptAfterStaleDelivery.document.status), uint8(EtherdocTypes.DocumentStatus.REVOKED));
     }
 
+    function test_trustedRemotePairsDoNotAllowCrossProduct() external {
+        uint64 sourceA = 101;
+        uint64 sourceB = 202;
+        address senderX = makeAddr("sender-x");
+        address senderY = makeAddr("sender-y");
+
+        s_receiverA.configureTrustedRemote(sourceA, senderX, true);
+        s_receiverA.configureTrustedRemote(sourceB, senderY, true);
+
+        bytes32 messageAX = _queueDocument("ipfs://pair-a-x");
+        bytes32 messageBY = _queueDocument("ipfs://pair-b-y");
+        bytes32 messageAY = _queueDocument("ipfs://pair-a-y");
+        bytes32 messageBX = _queueDocument("ipfs://pair-b-x");
+
+        s_router.deliverAs(messageAX, sourceA, senderX);
+        s_router.deliverAs(messageBY, sourceB, senderY);
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.UntrustedRemote.selector, sourceA, senderY));
+        s_router.deliverAs(messageAY, sourceA, senderY);
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.UntrustedRemote.selector, sourceB, senderX));
+        s_router.deliverAs(messageBX, sourceB, senderX);
+
+        assertTrue(s_receiverA.isTrustedRemote(sourceA, senderX));
+        assertTrue(s_receiverA.isTrustedRemote(sourceB, senderY));
+        assertFalse(s_receiverA.isTrustedRemote(sourceA, senderY));
+        assertFalse(s_receiverA.isTrustedRemote(sourceB, senderX));
+    }
+
+    function test_configureTrustedRemoteEmitsEventAndCanRevokePair() external {
+        uint64 sourceChainSelector = 101;
+        address remoteSender = makeAddr("remote-sender");
+
+        vm.expectEmit(true, true, false, true);
+        emit EtherdocReceiver.TrustedRemoteConfigured(sourceChainSelector, remoteSender, true);
+        s_receiverA.configureTrustedRemote(sourceChainSelector, remoteSender, true);
+        assertTrue(s_receiverA.isTrustedRemote(sourceChainSelector, remoteSender));
+
+        vm.expectEmit(true, true, false, true);
+        emit EtherdocReceiver.TrustedRemoteConfigured(sourceChainSelector, remoteSender, false);
+        s_receiverA.configureTrustedRemote(sourceChainSelector, remoteSender, false);
+        assertFalse(s_receiverA.isTrustedRemote(sourceChainSelector, remoteSender));
+    }
+
+    function test_configureTrustedRemoteRejectsInvalidPair() external {
+        uint64 sourceChainSelector = s_router.SOURCE_CHAIN_SELECTOR();
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidSourceChainSelector.selector, uint64(0)));
+        s_receiverA.configureTrustedRemote(0, address(s_sender), true);
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidRemoteSender.selector, address(0)));
+        s_receiverA.configureTrustedRemote(sourceChainSelector, address(0), true);
+    }
+
     function _allowReceiver(EtherdocReceiver _receiver) private {
         _receiver.configureTrustedRemote(s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender), true);
+    }
+
+    function _queueDocument(string memory _documentCID) private returns (bytes32 messageId) {
+        bytes32 documentId = s_sender.registerDocument(_documentCID);
+        return s_sender.dispatchDocument(documentId, DESTINATION_A);
     }
 }
