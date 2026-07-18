@@ -56,7 +56,9 @@ Registration and cross-chain dispatch are separate operations:
    corresponding EIP-712 relayer function.
 2. Configure each destination lane atomically with
    `configureRemote(selector, receiver, gasLimit, true)`.
-3. Call `dispatchDocument(documentId, selector)` in a separate transaction for every destination.
+3. Call `quoteFee(documentId, selector)`, choose the largest acceptable LINK fee, then call
+   `dispatchDocument(documentId, selector, maximumFee)` in a separate transaction for every
+   destination.
 4. Read `getDispatch(documentId, selector)` to track the CCIP `messageId`, destination, receiver,
    configured gas limit, document version, send timestamp, and source-side dispatch status for each
    lane.
@@ -69,6 +71,19 @@ for that lane and the orchestrator can retry it. A successful lane rejects dupli
 dispatches for the same document version. After revocation or supersession increments a record's
 version, that new state can be dispatched to the same lane. Historical dispatch evidence remains
 available through `getDispatchAtVersion`.
+
+The sender uses a treasury-funded LINK model: LINK is transferred to the sender ahead of dispatch,
+and only the owner can spend it through `dispatchDocument`. It does not pull fees from document
+issuers or relayers and does not support native-fee payment. A quote is only a point-in-time Router
+estimate, not a reservation; the fee may change before mining. The required `maximumFee` bounds that
+race, so an orchestrator should apply an explicit tolerance to the quote and requote after
+`FeeExceedsMaximum` instead of using an unlimited value.
+
+LINK approval uses `SafeERC20.forceApprove` for tokens that require resetting a non-zero allowance.
+The owner can return excess LINK or rescue any other ERC-20 with
+`withdrawToken(token, recipient, amount)`; zero token and recipient addresses are rejected and every
+successful withdrawal emits `TokenWithdrawn`. Operators should retain enough LINK for pending
+dispatches and send withdrawals to the configured treasury.
 
 `DISPATCHED` only means that the source Router accepted the CCIP message. It does not prove that the
 destination received or processed it; destination events and CCIP message status must be monitored

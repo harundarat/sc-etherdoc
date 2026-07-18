@@ -54,7 +54,8 @@ tersedia pada
    `NOT_DISPATCHED`.
 2. Periksa LINK balance, allowance/Router error, remote config, lane health, dan fee.
 3. Perbaiki penyebabnya.
-4. Panggil kembali `dispatchDocument(documentId, selector)`.
+4. Panggil `quoteFee(documentId, selector)`, tentukan toleransi fee, lalu panggil kembali
+   `dispatchDocument(documentId, selector, maximumFee)`.
 5. Mulai monitoring untuk message ID baru dari `MessageSent`.
 
 Kegagalan transaksi source tidak dapat menghasilkan event persisten dari sender karena transaksi
