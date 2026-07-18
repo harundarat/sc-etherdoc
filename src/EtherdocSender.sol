@@ -7,6 +7,11 @@ import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
 import {LinkTokenInterface} from "@chainlink/contracts/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
 
 contract EtherdocSender is OwnerIsCreator {
+    enum DocumentStatus {
+        NOT_REGISTERED,
+        REGISTERED
+    }
+
     enum DispatchStatus {
         NOT_DISPATCHED,
         DISPATCHED
@@ -15,7 +20,7 @@ contract EtherdocSender is OwnerIsCreator {
     struct DocumentRecord {
         string documentCID;
         uint64 registeredAt;
-        bool exists;
+        DocumentStatus status;
     }
 
     struct DispatchRecord {
@@ -76,12 +81,13 @@ contract EtherdocSender is OwnerIsCreator {
         }
 
         documentId = keccak256(bytes(_documentCID));
-        if (s_documents[documentId].exists) {
+        if (s_documents[documentId].status == DocumentStatus.REGISTERED) {
             revert DocumentAlreadyRegistered(documentId);
         }
 
         uint64 registeredAt = uint64(block.timestamp);
-        s_documents[documentId] = DocumentRecord({documentCID: _documentCID, registeredAt: registeredAt, exists: true});
+        s_documents[documentId] =
+            DocumentRecord({documentCID: _documentCID, registeredAt: registeredAt, status: DocumentStatus.REGISTERED});
 
         emit DocumentRegistered(documentId, _documentCID, registeredAt);
     }
@@ -105,7 +111,7 @@ contract EtherdocSender is OwnerIsCreator {
         }
 
         DocumentRecord storage document = s_documents[_documentId];
-        if (!document.exists) {
+        if (document.status != DocumentStatus.REGISTERED) {
             revert DocumentNotRegistered(_documentId);
         }
 
@@ -182,6 +188,6 @@ contract EtherdocSender is OwnerIsCreator {
     }
 
     function isDocumentRegistered(bytes32 _documentId) external view returns (bool) {
-        return s_documents[_documentId].exists;
+        return s_documents[_documentId].status == DocumentStatus.REGISTERED;
     }
 }

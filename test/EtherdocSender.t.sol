@@ -69,7 +69,7 @@ contract EtherdocSenderTest is Test {
         assertEq(s_documentId, keccak256(bytes(DOCUMENT_CID)));
         assertEq(document.documentCID, DOCUMENT_CID);
         assertEq(document.registeredAt, block.timestamp);
-        assertTrue(document.exists);
+        assertEq(uint8(document.status), uint8(EtherdocSender.DocumentStatus.REGISTERED));
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.DocumentAlreadyRegistered.selector, s_documentId));
         s_sender.registerDocument(DOCUMENT_CID);

@@ -35,12 +35,19 @@ contract Integration is Test {
         string memory documentCID = "hello";
 
         bytes32 documentId = etherdocSender.registerDocument(documentCID);
-        etherdocSender.dispatchDocument(documentId, destinationChainSelector);
+        bytes32 messageId = etherdocSender.dispatchDocument(documentId, destinationChainSelector);
 
         bool isRegisteredInSourceChain = etherdocSender.isDocumentRegistered(documentId);
-        bool isExistInDestinationChain = etherdocReceiver.documentExists(documentCID);
+        bool isReceivedInDestinationChain = etherdocReceiver.isDocumentReceived(documentId);
+        EtherdocReceiver.ReceiptRecord memory receipt = etherdocReceiver.getReceipt(documentId);
 
         assertEq(isRegisteredInSourceChain, true);
-        assertEq(isExistInDestinationChain, true);
+        assertEq(isReceivedInDestinationChain, true);
+        assertEq(receipt.messageId, messageId);
+        assertEq(receipt.documentCID, documentCID);
+        assertEq(receipt.sourceChainSelector, destinationChainSelector);
+        assertEq(receipt.sender, address(etherdocSender));
+        assertEq(receipt.receivedAt, block.timestamp);
+        assertEq(uint8(receipt.status), uint8(EtherdocReceiver.ReceiptStatus.RECEIVED));
     }
 }
