@@ -1,23 +1,25 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.24;
 
-import {Script, console} from "forge-std/Script.sol";
+import {console} from "forge-std/Script.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
+import {NetworkConfigScript} from "./NetworkConfig.s.sol";
 
-contract EtherdocSenderScript is Script {
+contract EtherdocSenderScript is NetworkConfigScript {
     EtherdocSender public etherdocSender;
 
     function setUp() public {}
 
     function run() public {
-        address destinationReceiver = vm.envAddress("DESTINATION_RECEIVER");
+        string memory networkName = vm.envString("NETWORK");
+        NetworkConfig memory network = _loadNetwork(networkName);
+        _validateCurrentNetwork(network, true);
 
         vm.startBroadcast();
-        etherdocSender =
-            new EtherdocSender(0xb9531b46fE8808fB3659e39704953c2B1112DD43, 0x685cE6742351ae9b618F383883D6d1e0c5A31B4B);
-        etherdocSender.configureDestinationChain(10344971235874465080, destinationReceiver, true); // Base Sepolia
+        etherdocSender = new EtherdocSender(network.router, network.linkToken);
         vm.stopBroadcast();
 
+        _persistDeployment(networkName, address(etherdocSender), network.receiver);
         console.log("EtherdocSender deployed at:", address(etherdocSender));
     }
 }

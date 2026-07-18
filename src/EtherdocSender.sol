@@ -14,6 +14,8 @@ import {
 import {EtherdocTypes} from "./EtherdocTypes.sol";
 
 contract EtherdocSender is OwnerIsCreator, EIP712 {
+    uint256 public constant CCIP_GAS_LIMIT = 500_000;
+
     bytes32 public constant REGISTER_DOCUMENT_TYPEHASH = keccak256(
         "RegisterDocument(address issuer,bytes32 documentId,bytes32 contentCommitment,bytes32 metadataCommitment,uint256 nonce,uint256 deadline)"
     );
@@ -258,7 +260,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
             data: abi.encode(document),
             tokenAmounts: new Client.EVMTokenAmount[](0),
             extraArgs: Client._argsToBytes(
-                Client.GenericExtraArgsV2({gasLimit: 500_000, allowOutOfOrderExecution: true})
+                Client.GenericExtraArgsV2({gasLimit: CCIP_GAS_LIMIT, allowOutOfOrderExecution: true})
             ),
             feeToken: address(i_linkToken)
         });
