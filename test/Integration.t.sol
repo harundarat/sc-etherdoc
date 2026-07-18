@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {CCIPLocalSimulator, IRouterClient, LinkToken} from "@chainlink/local/src/ccip/CCIPLocalSimulator.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocReceiver} from "../src/EtherdocReceiver.sol";
+import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 
 contract Integration is Test {
     CCIPLocalSimulator public ccipLocalSimulator;
@@ -44,7 +45,13 @@ contract Integration is Test {
         assertEq(isRegisteredInSourceChain, true);
         assertEq(isReceivedInDestinationChain, true);
         assertEq(receipt.messageId, messageId);
-        assertEq(receipt.documentCID, documentCID);
+        assertEq(receipt.document.documentCID, documentCID);
+        assertEq(receipt.document.documentId, documentId);
+        assertEq(receipt.document.contentCommitment, keccak256(bytes(documentCID)));
+        assertEq(receipt.document.issuer, address(this));
+        assertEq(receipt.document.sourceChainId, block.chainid);
+        assertEq(receipt.document.version, 1);
+        assertEq(uint8(receipt.document.status), uint8(EtherdocTypes.DocumentStatus.ACTIVE));
         assertEq(receipt.sourceChainSelector, destinationChainSelector);
         assertEq(receipt.sender, address(etherdocSender));
         assertEq(receipt.receivedAt, block.timestamp);

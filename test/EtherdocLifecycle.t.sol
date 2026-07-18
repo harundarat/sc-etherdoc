@@ -7,6 +7,7 @@ import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
 import {LinkToken} from "@chainlink/local/src/shared/LinkToken.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocReceiver} from "../src/EtherdocReceiver.sol";
+import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 
 contract DeferredRouter is IRouterClient {
     struct QueuedMessage {
@@ -86,11 +87,11 @@ contract EtherdocLifecycleTest is Test {
     function test_pendingDispatchIsNotReportedAsReceived() external {
         bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
 
-        EtherdocSender.DocumentRecord memory document = s_sender.getDocument(s_documentId);
+        EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(s_documentId);
         EtherdocSender.DispatchRecord memory dispatch = s_sender.getDispatch(s_documentId, DESTINATION_A);
         EtherdocReceiver.ReceiptRecord memory receipt = s_receiverA.getReceipt(s_documentId);
 
-        assertEq(uint8(document.status), uint8(EtherdocSender.DocumentStatus.REGISTERED));
+        assertEq(uint8(document.status), uint8(EtherdocTypes.DocumentStatus.ACTIVE));
         assertEq(dispatch.messageId, messageId);
         assertEq(uint8(dispatch.status), uint8(EtherdocSender.DispatchStatus.DISPATCHED));
         assertEq(receipt.messageId, bytes32(0));
@@ -117,7 +118,10 @@ contract EtherdocLifecycleTest is Test {
 
         EtherdocReceiver.ReceiptRecord memory retriedReceipt = s_receiverA.getReceipt(s_documentId);
         assertEq(retriedReceipt.messageId, messageId);
-        assertEq(retriedReceipt.documentCID, DOCUMENT_CID);
+        assertEq(retriedReceipt.document.documentCID, DOCUMENT_CID);
+        assertEq(retriedReceipt.document.issuer, address(this));
+        assertEq(retriedReceipt.document.sourceChainId, block.chainid);
+        assertEq(uint8(retriedReceipt.document.status), uint8(EtherdocTypes.DocumentStatus.ACTIVE));
         assertEq(retriedReceipt.sourceChainSelector, s_router.SOURCE_CHAIN_SELECTOR());
         assertEq(retriedReceipt.sender, address(s_sender));
         assertEq(retriedReceipt.receivedAt, block.timestamp);
@@ -143,6 +147,39 @@ contract EtherdocLifecycleTest is Test {
         assertTrue(s_receiverB.isDocumentReceived(s_documentId));
         assertEq(receiptA.messageId, messageIdA);
         assertEq(receiptB.messageId, messageIdB);
+    }
+
+    function test_revocationCanBeDispatchedWithoutDeletingRegistrationHistory() external {
+        _allowReceiver(s_receiverA);
+
+        bytes32 activeMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        s_router.deliver(activeMessageId);
+        assertTrue(s_receiverA.isDocumentActive(s_documentId));
+
+        s_sender.revokeDocument(s_documentId);
+        EtherdocTypes.DocumentRecord memory sourceDocument = s_sender.getDocument(s_documentId);
+        assertEq(uint8(sourceDocument.status), uint8(EtherdocTypes.DocumentStatus.REVOKED));
+        assertEq(sourceDocument.version, 2);
+        assertEq(sourceDocument.documentCID, DOCUMENT_CID);
+
+        bytes32 revokedMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        s_router.deliver(revokedMessageId);
+
+        EtherdocReceiver.ReceiptRecord memory destinationReceipt = s_receiverA.getReceipt(s_documentId);
+        EtherdocSender.DispatchRecord memory activeDispatch =
+            s_sender.getDispatchAtVersion(s_documentId, DESTINATION_A, 1);
+        assertEq(activeDispatch.messageId, activeMessageId);
+        assertEq(destinationReceipt.messageId, revokedMessageId);
+        assertEq(destinationReceipt.document.version, 2);
+        assertEq(uint8(destinationReceipt.document.status), uint8(EtherdocTypes.DocumentStatus.REVOKED));
+        assertTrue(s_receiverA.isDocumentReceived(s_documentId));
+        assertFalse(s_receiverA.isDocumentActive(s_documentId));
+
+        s_router.deliver(activeMessageId);
+        EtherdocReceiver.ReceiptRecord memory receiptAfterStaleDelivery = s_receiverA.getReceipt(s_documentId);
+        assertEq(receiptAfterStaleDelivery.messageId, revokedMessageId);
+        assertEq(receiptAfterStaleDelivery.document.version, 2);
+        assertEq(uint8(receiptAfterStaleDelivery.document.status), uint8(EtherdocTypes.DocumentStatus.REVOKED));
     }
 
     function _allowReceiver(EtherdocReceiver _receiver) private {

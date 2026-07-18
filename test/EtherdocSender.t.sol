@@ -6,6 +6,7 @@ import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRou
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
 import {LinkToken} from "@chainlink/local/src/shared/LinkToken.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
+import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 
 contract MockRouter is IRouterClient {
     error SimulatedLaneFailure(uint64 destinationChainSelector);
@@ -64,12 +65,19 @@ contract EtherdocSenderTest is Test {
     }
 
     function test_registersCanonicalDocumentOnce() external {
-        EtherdocSender.DocumentRecord memory document = s_sender.getDocument(s_documentId);
+        EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(s_documentId);
 
-        assertEq(s_documentId, keccak256(bytes(DOCUMENT_CID)));
+        assertEq(s_documentId, s_sender.computeDocumentId(address(this), DOCUMENT_CID));
+        assertEq(document.documentId, s_documentId);
+        assertEq(document.contentCommitment, keccak256(bytes(DOCUMENT_CID)));
+        assertEq(document.issuer, address(this));
+        assertEq(document.sourceChainId, block.chainid);
         assertEq(document.documentCID, DOCUMENT_CID);
         assertEq(document.registeredAt, block.timestamp);
-        assertEq(uint8(document.status), uint8(EtherdocSender.DocumentStatus.REGISTERED));
+        assertEq(document.updatedAt, block.timestamp);
+        assertEq(document.version, 1);
+        assertEq(document.schemaVersion, 1);
+        assertEq(uint8(document.status), uint8(EtherdocTypes.DocumentStatus.ACTIVE));
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.DocumentAlreadyRegistered.selector, s_documentId));
         s_sender.registerDocument(DOCUMENT_CID);
@@ -89,11 +97,13 @@ contract EtherdocSenderTest is Test {
         assertEq(dispatchA.destinationChainSelector, DESTINATION_A);
         assertEq(dispatchA.receiver, RECEIVER_A);
         assertEq(dispatchA.sentAt, block.timestamp);
+        assertEq(dispatchA.documentVersion, 1);
         assertEq(uint8(dispatchA.status), uint8(EtherdocSender.DispatchStatus.DISPATCHED));
         assertEq(dispatchB.messageId, messageIdB);
         assertEq(dispatchB.destinationChainSelector, DESTINATION_B);
         assertEq(dispatchB.receiver, RECEIVER_B);
         assertEq(dispatchB.sentAt, block.timestamp);
+        assertEq(dispatchB.documentVersion, 1);
         assertEq(uint8(dispatchB.status), uint8(EtherdocSender.DispatchStatus.DISPATCHED));
     }
 
@@ -101,7 +111,7 @@ contract EtherdocSenderTest is Test {
         s_sender.dispatchDocument(s_documentId, DESTINATION_A);
 
         vm.expectRevert(
-            abi.encodeWithSelector(EtherdocSender.DocumentAlreadyDispatched.selector, s_documentId, DESTINATION_A)
+            abi.encodeWithSelector(EtherdocSender.DocumentAlreadyDispatched.selector, s_documentId, DESTINATION_A, 1)
         );
         s_sender.dispatchDocument(s_documentId, DESTINATION_A);
 

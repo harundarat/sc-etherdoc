@@ -4,6 +4,7 @@ pragma solidity 0.8.24;
 import {OwnerIsCreator} from "@chainlink/contracts/src/v0.8/shared/access/OwnerIsCreator.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/contracts/applications/CCIPReceiver.sol";
+import {EtherdocTypes} from "./EtherdocTypes.sol";
 
 contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
     enum ReceiptStatus {
@@ -13,22 +14,28 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
 
     struct ReceiptRecord {
         bytes32 messageId;
-        string documentCID;
         uint64 sourceChainSelector;
         address sender;
         uint64 receivedAt;
         ReceiptStatus status;
+        EtherdocTypes.DocumentRecord document;
     }
 
     error SourceChainNotAllowlisted(uint64 sourceChainSelector);
     error SenderNotAllowlisted();
+    error InvalidDocumentSchema(uint16 schemaVersion);
+    error InvalidDocumentCommitment(bytes32 documentId);
+    error InvalidDocumentVersion(bytes32 documentId);
+    error ConflictingDocumentProvenance(bytes32 documentId);
 
     event MessageReceived(
         bytes32 indexed messageId,
         bytes32 indexed documentId,
         uint64 indexed sourceChainSelector,
         address sender,
-        string documentCID,
+        address issuer,
+        uint64 documentVersion,
+        EtherdocTypes.DocumentStatus documentStatus,
         uint64 receivedAt
     );
 
@@ -75,20 +82,36 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
             revert SenderNotAllowlisted();
         }
 
-        string memory documentCID = abi.decode(message.data, (string));
-        bytes32 documentId = keccak256(bytes(documentCID));
+        EtherdocTypes.DocumentRecord memory document = abi.decode(message.data, (EtherdocTypes.DocumentRecord));
+        _validateDocument(document);
+
+        ReceiptRecord storage existingReceipt = s_receipts[document.documentId];
+        if (existingReceipt.status == ReceiptStatus.RECEIVED) {
+            _validateSameProvenance(existingReceipt.document, document);
+            if (document.version <= existingReceipt.document.version) {
+                return;
+            }
+        }
+
         uint64 receivedAt = uint64(block.timestamp);
-        s_receipts[documentId] = ReceiptRecord({
+        s_receipts[document.documentId] = ReceiptRecord({
             messageId: message.messageId,
-            documentCID: documentCID,
             sourceChainSelector: message.sourceChainSelector,
             sender: sender,
             receivedAt: receivedAt,
-            status: ReceiptStatus.RECEIVED
+            status: ReceiptStatus.RECEIVED,
+            document: document
         });
 
         emit MessageReceived(
-            message.messageId, documentId, message.sourceChainSelector, sender, documentCID, receivedAt
+            message.messageId,
+            document.documentId,
+            message.sourceChainSelector,
+            sender,
+            document.issuer,
+            document.version,
+            document.status,
+            receivedAt
         );
     }
 
@@ -102,5 +125,52 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
 
     function isDocumentReceived(bytes32 _documentId) external view returns (bool) {
         return s_receipts[_documentId].status == ReceiptStatus.RECEIVED;
+    }
+
+    function isDocumentActive(bytes32 _documentId) external view returns (bool) {
+        return s_receipts[_documentId].document.status == EtherdocTypes.DocumentStatus.ACTIVE;
+    }
+
+    function verifyDocument(bytes32 _documentId, string calldata _documentCID)
+        external
+        view
+        returns (EtherdocTypes.DocumentRecord memory document, bool integrityMatches, bool isActive)
+    {
+        document = s_receipts[_documentId].document;
+        integrityMatches = document.contentCommitment == EtherdocTypes.contentCommitment(_documentCID)
+            && document.documentId == _documentId;
+        isActive = document.status == EtherdocTypes.DocumentStatus.ACTIVE;
+    }
+
+    function _validateDocument(EtherdocTypes.DocumentRecord memory _document) private pure {
+        if (_document.schemaVersion != EtherdocTypes.SCHEMA_VERSION) {
+            revert InvalidDocumentSchema(_document.schemaVersion);
+        }
+        bytes32 commitment = EtherdocTypes.contentCommitment(_document.documentCID);
+        bytes32 expectedDocumentId = EtherdocTypes.documentId(_document.issuer, commitment);
+        if (
+            _document.issuer == address(0) || _document.contentCommitment != commitment
+                || _document.documentId != expectedDocumentId
+        ) {
+            revert InvalidDocumentCommitment(_document.documentId);
+        }
+        if (_document.version == 0 || _document.status == EtherdocTypes.DocumentStatus.UNKNOWN) {
+            revert InvalidDocumentVersion(_document.documentId);
+        }
+    }
+
+    function _validateSameProvenance(
+        EtherdocTypes.DocumentRecord storage _existing,
+        EtherdocTypes.DocumentRecord memory _incoming
+    ) private view {
+        if (
+            _existing.documentId != _incoming.documentId || _existing.contentCommitment != _incoming.contentCommitment
+                || _existing.metadataCommitment != _incoming.metadataCommitment || _existing.issuer != _incoming.issuer
+                || _existing.sourceChainId != _incoming.sourceChainId
+                || _existing.registeredAt != _incoming.registeredAt
+                || _existing.schemaVersion != _incoming.schemaVersion || _existing.supersedes != _incoming.supersedes
+        ) {
+            revert ConflictingDocumentProvenance(_incoming.documentId);
+        }
     }
 }
