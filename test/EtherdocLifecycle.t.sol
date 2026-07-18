@@ -87,8 +87,8 @@ contract EtherdocLifecycleTest is Test {
         s_receiverB = new EtherdocReceiver(address(s_router));
 
         assertTrue(s_link.transfer(address(s_sender), 100 ether));
-        s_sender.configureDestinationChain(DESTINATION_A, address(s_receiverA), true);
-        s_sender.configureDestinationChain(DESTINATION_B, address(s_receiverB), true);
+        s_sender.configureRemote(DESTINATION_A, address(s_receiverA), 500_000, true);
+        s_sender.configureRemote(DESTINATION_B, address(s_receiverB), 500_000, true);
         s_documentId = s_sender.registerDocument(DOCUMENT_CID);
     }
 

@@ -14,6 +14,9 @@ contract MockRouter is IRouterClient {
     uint256 public constant FEE = 1 ether;
     uint256 private s_nonce;
     mapping(uint64 destinationChainSelector => bool shouldFail) private s_failingLanes;
+    mapping(uint64 destinationChainSelector => address receiver) private s_lastReceivers;
+    mapping(uint64 destinationChainSelector => uint256 gasLimit) private s_lastGasLimits;
+    mapping(uint64 destinationChainSelector => bool allowOutOfOrderExecution) private s_lastOutOfOrderPolicies;
 
     function setLaneFailure(uint64 _destinationChainSelector, bool _shouldFail) external {
         s_failingLanes[_destinationChainSelector] = _shouldFail;
@@ -36,14 +39,35 @@ contract MockRouter is IRouterClient {
             revert SimulatedLaneFailure(_destinationChainSelector);
         }
 
+        bytes calldata extraArgs = _message.extraArgs;
+        require(bytes4(extraArgs[:4]) == Client.GENERIC_EXTRA_ARGS_V2_TAG, "unexpected extra args");
+        (uint256 gasLimit, bool allowOutOfOrderExecution) = abi.decode(extraArgs[4:], (uint256, bool));
+        s_lastReceivers[_destinationChainSelector] = abi.decode(_message.receiver, (address));
+        s_lastGasLimits[_destinationChainSelector] = gasLimit;
+        s_lastOutOfOrderPolicies[_destinationChainSelector] = allowOutOfOrderExecution;
+
         s_nonce++;
         return keccak256(abi.encode(_destinationChainSelector, _message.receiver, _message.data, s_nonce));
+    }
+
+    function lastReceiver(uint64 _destinationChainSelector) external view returns (address) {
+        return s_lastReceivers[_destinationChainSelector];
+    }
+
+    function lastGasLimit(uint64 _destinationChainSelector) external view returns (uint256) {
+        return s_lastGasLimits[_destinationChainSelector];
+    }
+
+    function lastOutOfOrderPolicy(uint64 _destinationChainSelector) external view returns (bool) {
+        return s_lastOutOfOrderPolicies[_destinationChainSelector];
     }
 }
 
 contract EtherdocSenderTest is Test {
     uint64 private constant DESTINATION_A = 11;
     uint64 private constant DESTINATION_B = 22;
+    uint256 private constant GAS_LIMIT_A = 350_000;
+    uint256 private constant GAS_LIMIT_B = 600_000;
     address private constant RECEIVER_A = address(0xA11CE);
     address private constant RECEIVER_B = address(0xB0B);
     string private constant DOCUMENT_CID = "ipfs://bafy-document";
@@ -59,8 +83,8 @@ contract EtherdocSenderTest is Test {
         s_sender = new EtherdocSender(address(s_router), address(s_link));
 
         assertTrue(s_link.transfer(address(s_sender), 100 ether));
-        s_sender.configureDestinationChain(DESTINATION_A, RECEIVER_A, true);
-        s_sender.configureDestinationChain(DESTINATION_B, RECEIVER_B, true);
+        s_sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
+        s_sender.configureRemote(DESTINATION_B, RECEIVER_B, GAS_LIMIT_B, true);
         s_documentId = s_sender.registerDocument(DOCUMENT_CID);
     }
 
@@ -98,13 +122,21 @@ contract EtherdocSenderTest is Test {
         assertEq(dispatchA.receiver, RECEIVER_A);
         assertEq(dispatchA.sentAt, block.timestamp);
         assertEq(dispatchA.documentVersion, 1);
+        assertEq(dispatchA.gasLimit, GAS_LIMIT_A);
         assertEq(uint8(dispatchA.status), uint8(EtherdocSender.DispatchStatus.DISPATCHED));
         assertEq(dispatchB.messageId, messageIdB);
         assertEq(dispatchB.destinationChainSelector, DESTINATION_B);
         assertEq(dispatchB.receiver, RECEIVER_B);
         assertEq(dispatchB.sentAt, block.timestamp);
         assertEq(dispatchB.documentVersion, 1);
+        assertEq(dispatchB.gasLimit, GAS_LIMIT_B);
         assertEq(uint8(dispatchB.status), uint8(EtherdocSender.DispatchStatus.DISPATCHED));
+        assertEq(s_router.lastReceiver(DESTINATION_A), RECEIVER_A);
+        assertEq(s_router.lastReceiver(DESTINATION_B), RECEIVER_B);
+        assertEq(s_router.lastGasLimit(DESTINATION_A), GAS_LIMIT_A);
+        assertEq(s_router.lastGasLimit(DESTINATION_B), GAS_LIMIT_B);
+        assertTrue(s_router.lastOutOfOrderPolicy(DESTINATION_A));
+        assertTrue(s_router.lastOutOfOrderPolicy(DESTINATION_B));
     }
 
     function test_rejectsDuplicateLaneButAllowsAnotherLane() external {
@@ -140,5 +172,57 @@ contract EtherdocSenderTest is Test {
         EtherdocSender.DispatchRecord memory retriedDispatch = s_sender.getDispatch(s_documentId, DESTINATION_B);
         assertEq(retriedDispatch.messageId, retriedMessageId);
         assertEq(uint8(retriedDispatch.status), uint8(EtherdocSender.DispatchStatus.DISPATCHED));
+    }
+
+    function test_dispatchCannotOverrideConfiguredReceiver() external {
+        address arbitraryReceiver = makeAddr("arbitrary-receiver");
+        (bool success,) = address(s_sender)
+            .call(
+                abi.encodeWithSignature(
+                    "dispatchDocument(bytes32,uint64,address)", s_documentId, DESTINATION_A, arbitraryReceiver
+                )
+            );
+
+        assertFalse(success);
+
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        assertEq(s_router.lastReceiver(DESTINATION_A), RECEIVER_A);
+        assertNotEq(s_router.lastReceiver(DESTINATION_A), arbitraryReceiver);
+    }
+
+    function test_configureRemoteRotatesReceiverAndGasLimitWithEvent() external {
+        address rotatedReceiver = makeAddr("rotated-receiver");
+        uint256 rotatedGasLimit = 700_000;
+
+        vm.expectEmit(true, true, false, true);
+        emit EtherdocSender.RemoteConfigUpdated(DESTINATION_A, rotatedReceiver, rotatedGasLimit, true);
+        s_sender.configureRemote(DESTINATION_A, rotatedReceiver, rotatedGasLimit, true);
+
+        EtherdocSender.RemoteConfig memory remote = s_sender.getRemoteConfig(DESTINATION_A);
+        assertEq(remote.receiver, rotatedReceiver);
+        assertEq(remote.gasLimit, rotatedGasLimit);
+        assertTrue(remote.allowlisted);
+
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        assertEq(s_router.lastReceiver(DESTINATION_A), rotatedReceiver);
+        assertEq(s_router.lastGasLimit(DESTINATION_A), rotatedGasLimit);
+    }
+
+    function test_configureRemoteRejectsInvalidConfig() external {
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.InvalidDestinationChainSelector.selector, uint64(0)));
+        s_sender.configureRemote(0, RECEIVER_A, GAS_LIMIT_A, true);
+
+        vm.expectRevert(EtherdocSender.InvalidReceiverAddress.selector);
+        s_sender.configureRemote(DESTINATION_A, address(0), GAS_LIMIT_A, true);
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.InvalidGasLimit.selector, uint256(0)));
+        s_sender.configureRemote(DESTINATION_A, RECEIVER_A, 0, true);
+    }
+
+    function test_dispatchRejectsDisabledRemote() external {
+        s_sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, false);
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.DestinationChainNotAllowlisted.selector, DESTINATION_A));
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A);
     }
 }

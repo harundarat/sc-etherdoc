@@ -33,7 +33,6 @@ abstract contract NetworkConfigScript is Script {
     error DestinationChainUnsupported(string sourceNetwork, string destinationNetwork, uint64 chainSelector);
     error DeploymentAddressMissing(string network, string contractRole);
     error UnsupportedFeeMode(string network, FeeMode feeMode);
-    error GasLimitMismatch(string network, uint256 configured, uint256 expected);
 
     function _loadNetwork(string memory _networkName) internal view returns (NetworkConfig memory config) {
         string memory json = vm.readFile(_networkConfigPath());
@@ -146,12 +145,6 @@ abstract contract NetworkConfigScript is Script {
         bytes memory runtimeCode = abi.decode(response, (bytes));
         if (runtimeCode.length == 0) {
             revert RemoteContractCodeMissing(_network.name, _contractRole, _account);
-        }
-    }
-
-    function _requireGasLimit(NetworkConfig memory _network, uint256 _expectedGasLimit) internal pure {
-        if (_network.gasLimit != _expectedGasLimit) {
-            revert GasLimitMismatch(_network.name, _network.gasLimit, _expectedGasLimit);
         }
     }
 

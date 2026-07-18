@@ -44,10 +44,6 @@ contract NetworkConfigHarness is NetworkConfigScript {
     function requireDeployment(address _account, string memory _network, string memory _contractRole) external pure {
         _requireDeployment(_account, _network, _contractRole);
     }
-
-    function requireGasLimit(NetworkConfig memory _network, uint256 _expectedGasLimit) external pure {
-        _requireGasLimit(_network, _expectedGasLimit);
-    }
 }
 
 contract NetworkConfigTest is Test {
@@ -143,17 +139,6 @@ contract NetworkConfigTest is Test {
             )
         );
         s_harness.requireDeployment(address(0), "baseSepolia", "EtherdocReceiver");
-    }
-
-    function test_configureRejectsGasLimitMismatch() external {
-        NetworkConfigScript.NetworkConfig memory destination = _network("destination");
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                NetworkConfigScript.GasLimitMismatch.selector, destination.name, destination.gasLimit, 400_000
-            )
-        );
-        s_harness.requireGasLimit(destination, 400_000);
     }
 
     function _network(string memory _name) private view returns (NetworkConfigScript.NetworkConfig memory network) {

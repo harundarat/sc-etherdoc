@@ -18,14 +18,14 @@ contract ConfigureEtherdocSenderScript is NetworkConfigScript {
         _requireRemoteCode(destination, "EtherdocReceiver", destination.receiver);
 
         EtherdocSender sender = EtherdocSender(source.sender);
-        _requireGasLimit(destination, sender.CCIP_GAS_LIMIT());
 
         vm.startBroadcast();
-        sender.configureDestinationChain(destination.chainSelector, destination.receiver, true);
+        sender.configureRemote(destination.chainSelector, destination.receiver, destination.gasLimit, true);
         vm.stopBroadcast();
 
         console.log("Configured EtherdocSender:", source.sender);
         console.log("Destination receiver:", destination.receiver);
         console.log("Destination selector:", destination.chainSelector);
+        console.log("Destination gas limit:", destination.gasLimit);
     }
 }

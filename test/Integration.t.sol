@@ -25,7 +25,7 @@ contract Integration is Test {
         etherdocSender = new EtherdocSender(address(sourceRouter), address(link));
         etherdocReceiver = new EtherdocReceiver(address(destinationRouter));
 
-        etherdocSender.configureDestinationChain(destinationChainSelector, address(etherdocReceiver), true);
+        etherdocSender.configureRemote(destinationChainSelector, address(etherdocReceiver), 500_000, true);
         etherdocReceiver.configureTrustedRemote(chainSelector, address(etherdocSender), true);
     }
 

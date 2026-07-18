@@ -14,8 +14,6 @@ import {
 import {EtherdocTypes} from "./EtherdocTypes.sol";
 
 contract EtherdocSender is OwnerIsCreator, EIP712 {
-    uint256 public constant CCIP_GAS_LIMIT = 500_000;
-
     bytes32 public constant REGISTER_DOCUMENT_TYPEHASH = keccak256(
         "RegisterDocument(address issuer,bytes32 documentId,bytes32 contentCommitment,bytes32 metadataCommitment,uint256 nonce,uint256 deadline)"
     );
@@ -37,11 +35,13 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         address receiver;
         uint64 sentAt;
         uint64 documentVersion;
+        uint256 gasLimit;
         DispatchStatus status;
     }
 
-    struct DestinationConfig {
+    struct RemoteConfig {
         address receiver;
+        uint256 gasLimit;
         bool allowlisted;
     }
 
@@ -67,7 +67,9 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
     error DocumentNotRegistered(bytes32 documentId);
     error DocumentNotActive(bytes32 documentId);
     error DocumentAlreadyDispatched(bytes32 documentId, uint64 destinationChainSelector, uint64 documentVersion);
+    error InvalidDestinationChainSelector(uint64 destinationChainSelector);
     error InvalidReceiverAddress();
+    error InvalidGasLimit(uint256 gasLimit);
     error DestinationChainNotAllowlisted(uint64 destinationChainSelector);
 
     event IssuerAuthorizationUpdated(address indexed issuer, bool authorized);
@@ -89,8 +91,8 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         bytes32 relatedDocumentId,
         uint64 updatedAt
     );
-    event DestinationChainConfigured(
-        uint64 indexed destinationChainSelector, address indexed receiver, bool allowlisted
+    event RemoteConfigUpdated(
+        uint64 indexed destinationChainSelector, address indexed receiver, uint256 gasLimit, bool allowlisted
     );
     event MessageSent(
         bytes32 indexed messageId,
@@ -100,6 +102,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         string documentCID,
         uint64 documentVersion,
         EtherdocTypes.DocumentStatus documentStatus,
+        uint256 gasLimit,
         address feeToken,
         uint256 fees
     );
@@ -113,7 +116,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
             uint64 destinationChainSelector => mapping(uint64 documentVersion => DispatchRecord dispatchRecord)
         )
     ) private s_dispatches;
-    mapping(uint64 destinationChainSelector => DestinationConfig config) private s_destinations;
+    mapping(uint64 destinationChainSelector => RemoteConfig config) private s_remotes;
     mapping(address issuer => bool authorized) private s_authorizedIssuers;
     mapping(address issuer => uint256 nonce) private s_issuerNonces;
 
@@ -240,8 +243,8 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         onlyOwner
         returns (bytes32 messageId)
     {
-        DestinationConfig memory destination = s_destinations[_destinationChainSelector];
-        if (!destination.allowlisted) {
+        RemoteConfig memory remote = s_remotes[_destinationChainSelector];
+        if (!remote.allowlisted) {
             revert DestinationChainNotAllowlisted(_destinationChainSelector);
         }
 
@@ -256,11 +259,11 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         }
 
         Client.EVM2AnyMessage memory evm2AnyMessage = Client.EVM2AnyMessage({
-            receiver: abi.encode(destination.receiver),
+            receiver: abi.encode(remote.receiver),
             data: abi.encode(document),
             tokenAmounts: new Client.EVMTokenAmount[](0),
             extraArgs: Client._argsToBytes(
-                Client.GenericExtraArgsV2({gasLimit: CCIP_GAS_LIMIT, allowOutOfOrderExecution: true})
+                Client.GenericExtraArgsV2({gasLimit: remote.gasLimit, allowOutOfOrderExecution: true})
             ),
             feeToken: address(i_linkToken)
         });
@@ -278,9 +281,10 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         s_dispatches[_documentId][_destinationChainSelector][document.version] = DispatchRecord({
             messageId: messageId,
             destinationChainSelector: _destinationChainSelector,
-            receiver: destination.receiver,
+            receiver: remote.receiver,
             sentAt: sentAt,
             documentVersion: document.version,
+            gasLimit: remote.gasLimit,
             status: DispatchStatus.DISPATCHED
         });
 
@@ -288,26 +292,39 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
             messageId,
             _documentId,
             _destinationChainSelector,
-            destination.receiver,
+            remote.receiver,
             document.documentCID,
             document.version,
             document.status,
+            remote.gasLimit,
             address(i_linkToken),
             fees
         );
     }
 
-    function configureDestinationChain(uint64 _destinationChainSelector, address _receiver, bool _allowlisted)
+    /**
+     * @notice Atomically configures the receiver and execution gas for one destination selector.
+     * @dev Destination bytecode cannot be inspected from the source chain. The deployment script
+     *      validates the remote receiver code at configuration time.
+     */
+    function configureRemote(uint64 _destinationChainSelector, address _receiver, uint256 _gasLimit, bool _allowlisted)
         external
         onlyOwner
     {
+        if (_destinationChainSelector == 0) {
+            revert InvalidDestinationChainSelector(_destinationChainSelector);
+        }
         if (_receiver == address(0)) {
             revert InvalidReceiverAddress();
         }
+        if (_gasLimit == 0) {
+            revert InvalidGasLimit(_gasLimit);
+        }
 
-        s_destinations[_destinationChainSelector] = DestinationConfig({receiver: _receiver, allowlisted: _allowlisted});
+        s_remotes[_destinationChainSelector] =
+            RemoteConfig({receiver: _receiver, gasLimit: _gasLimit, allowlisted: _allowlisted});
 
-        emit DestinationChainConfigured(_destinationChainSelector, _receiver, _allowlisted);
+        emit RemoteConfigUpdated(_destinationChainSelector, _receiver, _gasLimit, _allowlisted);
     }
 
     function setIssuerAuthorization(address _issuer, bool _authorized) external onlyOwner {
@@ -339,8 +356,8 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         return s_dispatches[_documentId][_destinationChainSelector][_documentVersion];
     }
 
-    function getDestinationConfig(uint64 _destinationChainSelector) external view returns (DestinationConfig memory) {
-        return s_destinations[_destinationChainSelector];
+    function getRemoteConfig(uint64 _destinationChainSelector) external view returns (RemoteConfig memory) {
+        return s_remotes[_destinationChainSelector];
     }
 
     function isDocumentRegistered(bytes32 _documentId) external view returns (bool) {
