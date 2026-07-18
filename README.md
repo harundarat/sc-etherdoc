@@ -1,66 +1,33 @@
-## Foundry
+# Etherdoc
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+Etherdoc registers a canonical document CID on a source chain and dispatches that document to one or
+more destination chains through Chainlink CCIP.
 
-Foundry consists of:
+## Document workflow
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+Registration and cross-chain dispatch are separate operations:
 
-## Documentation
+1. Call `registerDocument(cid)` once. It returns `documentId = keccak256(bytes(cid))`.
+2. Configure each destination lane with `configureDestinationChain(selector, receiver, true)`.
+3. Call `dispatchDocument(documentId, selector)` in a separate transaction for every destination.
+4. Read `getDispatch(documentId, selector)` to track the CCIP `messageId`, destination, receiver,
+   send timestamp, and source-side dispatch status for each lane.
 
-https://book.getfoundry.sh/
+Cross-chain replication is asynchronous and non-atomic. Dispatching to several chains is one
+off-chain orchestrated workflow, not one transaction that becomes final everywhere simultaneously.
+The orchestrator should submit and monitor one transaction per destination. Consequently, a failure
+on one lane does not revert successful lanes. If a router call fails, no dispatch record is written
+for that lane and the orchestrator can retry it. A successful lane rejects duplicate normal
+dispatches.
 
-## Usage
+`DISPATCHED` only means that the source Router accepted the CCIP message. It does not prove that the
+destination received or processed it; destination events and CCIP message status must be monitored
+separately.
 
-### Build
-
-```shell
-$ forge build
-```
-
-### Test
-
-```shell
-$ forge test
-```
-
-### Format
+## Development
 
 ```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
+forge build
+forge test
+forge fmt --check
 ```

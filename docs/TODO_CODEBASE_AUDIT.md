@@ -53,7 +53,7 @@ coverage 0% menegaskan bahwa seluruh jalur error belum diuji.
 
 ## P0 — Perbaiki Alur Inti
 
-### [ ] P0-01 Pisahkan registrasi dokumen dari pengiriman per destination chain
+### [x] P0-01 Pisahkan registrasi dokumen dari pengiriman per destination chain
 
 **Bukti:** `src/EtherdocSender.sol:55-70`.
 
