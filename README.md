@@ -90,6 +90,12 @@ provide replay and indexing evidence. Out-of-order execution remains enabled, bu
 only version 1 `REGISTER` records followed by one version 2 terminal operation, so an older active
 record cannot overwrite a received revocation or supersession.
 
+Receiver failures deliberately revert so CCIP retains the failed execution and return data for
+monitoring and manual execution. Authentication failures are never stored as valid messages. After a
+source Router has accepted a dispatch, recover the same message ID instead of sending a duplicate
+payload. See the [CCIP recovery runbook](docs/CCIP_RECOVERY_RUNBOOK.md) for monitoring, triage, manual
+execution, lane pause/resume, and incident evidence.
+
 ## Development
 
 ```shell
