@@ -227,9 +227,23 @@ P1-06.
 - Validasi code size receiver pada script/fork test; pahami bahwa code destination tetap dapat berubah
   setelah validasi.
 
-### [ ] P1-03 Tambahkan payload schema, versioning, validation, dan idempotency
+### [x] P1-03 Tambahkan payload schema, versioning, validation, dan idempotency
 
-**Bukti:** payload saat ini hanya `abi.encode(string)` dan di-decode berulang tanpa batas ukuran.
+**Bukti terkini:** bukti awal sudah stale karena refactor provenance telah mengganti payload string
+polos dengan `DocumentRecord`, tetapi record tersebut masih dikirim tanpa envelope operation/version,
+CID hanya diperiksa kosong di source, dan receiver belum menyimpan processed `messageId`.
+`src/EtherdocTypes.sol:5-45`, `src/EtherdocSender.sol:243-328` dan `450-490`, serta
+`src/EtherdocReceiver.sol:102-175` dan `216-280` sekarang menggunakan `DocumentPayload` schema v1
+yang mengikat operation, document ID, version, dan provenance. Source dan destination membatasi CID
+sampai 256 byte dan encoded payload sampai 1.024 byte serta memvalidasi schema, commitment, field
+envelope, timestamp, operation/status, dan transisi versi.
+
+Aturan duplicate dipilih idempotent: replay `messageId` dan pesan berbeda dengan versi equal/stale
+tidak mengubah receipt, ditandai processed, dan memancarkan `MessageIgnored`. Payload invalid,
+provenance/state yang konflik, atau transisi baru setelah state terminal tetap revert. Karena
+`allowOutOfOrderExecution` dipertahankan, schema v1 membatasi `REGISTER` ke version 1 dan
+`REVOKE`/`SUPERSEDE` ke terminal version 2; test mengirim revocation lebih dulu lalu registration lama
+dan membuktikan dokumen tidak aktif kembali (`test/EtherdocLifecycle.t.sol:232-381`).
 
 **TODO:**
 
