@@ -8,7 +8,7 @@ import {EtherdocTypes} from "./EtherdocTypes.sol";
 
 contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
     uint16 public constant PAYLOAD_SCHEMA_VERSION = EtherdocTypes.SCHEMA_VERSION;
-    uint256 public constant MAX_DOCUMENT_CID_LENGTH = EtherdocTypes.MAX_DOCUMENT_CID_LENGTH;
+    uint256 public constant CANONICAL_CID_LENGTH = EtherdocTypes.CANONICAL_CID_LENGTH;
     uint256 public constant MAX_PAYLOAD_LENGTH = EtherdocTypes.MAX_PAYLOAD_LENGTH;
 
     enum ReceiptStatus {
@@ -36,7 +36,10 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
     error InvalidPayloadDocumentId(bytes32 payloadDocumentId, bytes32 documentId);
     error InvalidPayloadVersion(uint64 payloadVersion, uint64 documentVersion);
     error InvalidPayloadOperation(EtherdocTypes.Operation operation, EtherdocTypes.DocumentStatus status);
-    error InvalidDocumentCID(uint256 cidLength);
+    error InvalidContentDigest(bytes32 documentId);
+    error InvalidDocumentCID();
+    error InvalidCIDMetadata(bytes32 documentId);
+    error RawCIDContentDigestMismatch(bytes32 contentDigest, bytes32 cidDigest);
     error InvalidDocumentCommitment(bytes32 documentId);
     error InvalidDocumentVersion(bytes32 documentId);
     error InvalidDocumentTransition(bytes32 documentId, uint64 currentVersion, uint64 incomingVersion);
@@ -239,14 +242,13 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
         return s_receipts[_documentId].document.status == EtherdocTypes.DocumentStatus.ACTIVE;
     }
 
-    function verifyDocument(bytes32 _documentId, string calldata _documentCID)
+    function verifyDocument(bytes32 _documentId, bytes32 _contentDigest)
         external
         view
         returns (EtherdocTypes.DocumentRecord memory document, bool integrityMatches, bool isActive)
     {
         document = s_receipts[_documentId].document;
-        integrityMatches = document.contentCommitment == EtherdocTypes.contentCommitment(_documentCID)
-            && document.documentId == _documentId;
+        integrityMatches = document.contentDigest == _contentDigest && document.documentId == _documentId;
         isActive = document.status == EtherdocTypes.DocumentStatus.ACTIVE;
     }
 
@@ -295,16 +297,21 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
     }
 
     function _validateDocument(EtherdocTypes.DocumentRecord memory _document) private pure {
-        uint256 cidLength = bytes(_document.documentCID).length;
-        if (cidLength == 0 || cidLength > EtherdocTypes.MAX_DOCUMENT_CID_LENGTH) {
-            revert InvalidDocumentCID(cidLength);
+        if (_document.contentDigest == bytes32(0)) {
+            revert InvalidContentDigest(_document.documentId);
         }
-        bytes32 commitment = EtherdocTypes.contentCommitment(_document.documentCID);
-        bytes32 expectedDocumentId = EtherdocTypes.documentId(_document.issuer, commitment);
-        if (
-            _document.issuer == address(0) || _document.contentCommitment != commitment
-                || _document.documentId != expectedDocumentId
-        ) {
+        (bool validCID, uint8 cidCodec, bytes32 cidDigest) = EtherdocTypes.decodeCanonicalCID(_document.documentCID);
+        if (!validCID) {
+            revert InvalidDocumentCID();
+        }
+        if (_document.cidCodec != cidCodec || _document.cidDigest != cidDigest) {
+            revert InvalidCIDMetadata(_document.documentId);
+        }
+        if (cidCodec == EtherdocTypes.CID_CODEC_RAW && cidDigest != _document.contentDigest) {
+            revert RawCIDContentDigestMismatch(_document.contentDigest, cidDigest);
+        }
+        bytes32 expectedDocumentId = EtherdocTypes.documentId(_document.issuer, _document.contentDigest);
+        if (_document.issuer == address(0) || _document.documentId != expectedDocumentId) {
             revert InvalidDocumentCommitment(_document.documentId);
         }
         if (
@@ -321,9 +328,10 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
         EtherdocTypes.DocumentRecord memory _incoming
     ) private view {
         if (
-            _existing.documentId != _incoming.documentId || _existing.contentCommitment != _incoming.contentCommitment
-                || _existing.metadataCommitment != _incoming.metadataCommitment || _existing.issuer != _incoming.issuer
-                || _existing.sourceChainId != _incoming.sourceChainId
+            _existing.documentId != _incoming.documentId || _existing.contentDigest != _incoming.contentDigest
+                || _existing.metadataCommitment != _incoming.metadataCommitment
+                || _existing.cidCodec != _incoming.cidCodec || _existing.cidDigest != _incoming.cidDigest
+                || _existing.issuer != _incoming.issuer || _existing.sourceChainId != _incoming.sourceChainId
                 || _existing.registeredAt != _incoming.registeredAt
                 || _existing.schemaVersion != _incoming.schemaVersion || _existing.supersedes != _incoming.supersedes
         ) {

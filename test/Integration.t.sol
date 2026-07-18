@@ -34,9 +34,10 @@ contract Integration is Test {
     function test_sendAndReceiveCrossChainMessagePayFeesInLink() external {
         ccipLocalSimulator.requestLinkFromFaucet(address(etherdocSender), 10 ether);
 
-        string memory documentCID = "hello";
+        bytes32 contentDigest = 0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824;
+        string memory documentCID = "bafkreibm6jg3ux5qumhcn2b3flc3tyu6dmlb4xa7u5bf44yegnrjhc4yeq";
 
-        bytes32 documentId = etherdocSender.registerDocument(documentCID);
+        bytes32 documentId = etherdocSender.registerDocument(contentDigest, documentCID);
         uint256 quotedFee = etherdocSender.quoteFee(documentId, destinationChainSelector);
         bytes32 messageId = etherdocSender.dispatchDocument(documentId, destinationChainSelector, quotedFee);
 
@@ -49,7 +50,9 @@ contract Integration is Test {
         assertEq(receipt.messageId, messageId);
         assertEq(receipt.document.documentCID, documentCID);
         assertEq(receipt.document.documentId, documentId);
-        assertEq(receipt.document.contentCommitment, keccak256(bytes(documentCID)));
+        assertEq(receipt.document.contentDigest, contentDigest);
+        assertEq(receipt.document.cidCodec, 0x55);
+        assertEq(receipt.document.cidDigest, contentDigest);
         assertEq(receipt.document.issuer, address(this));
         assertEq(receipt.document.sourceChainId, block.chainid);
         assertEq(receipt.document.version, 1);

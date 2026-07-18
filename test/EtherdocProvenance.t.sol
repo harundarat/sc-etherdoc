@@ -6,11 +6,13 @@ import {LinkToken} from "@chainlink/local/src/shared/LinkToken.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 import {MockRouter} from "./EtherdocSender.t.sol";
+import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
 
 contract EtherdocProvenanceTest is Test {
     uint256 private constant ISSUER_PRIVATE_KEY = 0xA11CE;
     uint256 private constant UNAUTHORIZED_ISSUER_PRIVATE_KEY = 0xBAD;
-    string private constant DOCUMENT_CID = "ipfs://bafy-provenance";
+    bytes32 private constant DOCUMENT_DIGEST = 0x96d815328a42cb4ef89d5e0b7a1df6be43b484832c83a7b4596d8402c7c0b12b;
+    string private constant DOCUMENT_CID = "bafkreiew3aktfcscznhprhk6bn5b35v6io2ijazmqot3iwlnqqbmpqfrfm";
     bytes32 private constant METADATA_COMMITMENT = keccak256("private metadata");
 
     EtherdocSender private s_sender;
@@ -30,7 +32,7 @@ contract EtherdocProvenanceTest is Test {
     function test_rejectsUnauthorizedIssuer() external {
         vm.prank(s_unauthorizedIssuer);
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.IssuerNotAuthorized.selector, s_unauthorizedIssuer));
-        s_sender.registerDocument(DOCUMENT_CID, METADATA_COMMITMENT);
+        s_sender.registerDocument(DOCUMENT_DIGEST, DOCUMENT_CID, METADATA_COMMITMENT);
     }
 
     function test_relayerPreservesIssuerProvenanceAndRejectsSignatureReplay() external {
@@ -40,12 +42,15 @@ contract EtherdocProvenanceTest is Test {
         address relayer = address(0xBEEF);
 
         vm.prank(relayer);
-        bytes32 documentId =
-            s_sender.registerDocumentBySig(DOCUMENT_CID, METADATA_COMMITMENT, s_issuer, deadline, signature);
+        bytes32 documentId = s_sender.registerDocumentBySig(
+            DOCUMENT_DIGEST, DOCUMENT_CID, METADATA_COMMITMENT, s_issuer, deadline, signature
+        );
 
         EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(documentId);
         assertEq(document.documentId, documentId);
-        assertEq(document.contentCommitment, keccak256(bytes(DOCUMENT_CID)));
+        assertEq(document.contentDigest, DOCUMENT_DIGEST);
+        assertEq(document.cidCodec, 0x55);
+        assertEq(document.cidDigest, DOCUMENT_DIGEST);
         assertEq(document.metadataCommitment, METADATA_COMMITMENT);
         assertEq(document.issuer, s_issuer);
         assertNotEq(document.issuer, relayer);
@@ -53,13 +58,15 @@ contract EtherdocProvenanceTest is Test {
         assertEq(document.registeredAt, block.timestamp);
         assertEq(document.updatedAt, block.timestamp);
         assertEq(document.version, 1);
-        assertEq(document.schemaVersion, 1);
+        assertEq(document.schemaVersion, 2);
         assertEq(uint8(document.status), uint8(EtherdocTypes.DocumentStatus.ACTIVE));
         assertEq(s_sender.issuerNonce(s_issuer), 1);
 
         vm.prank(relayer);
         vm.expectPartialRevert(EtherdocSender.InvalidIssuerSignature.selector);
-        s_sender.registerDocumentBySig(DOCUMENT_CID, METADATA_COMMITMENT, s_issuer, deadline, signature);
+        s_sender.registerDocumentBySig(
+            DOCUMENT_DIGEST, DOCUMENT_CID, METADATA_COMMITMENT, s_issuer, deadline, signature
+        );
         assertEq(s_sender.issuerNonce(s_issuer), 1);
     }
 
@@ -68,7 +75,9 @@ contract EtherdocProvenanceTest is Test {
         bytes memory signature = _signRegistration(UNAUTHORIZED_ISSUER_PRIVATE_KEY, s_unauthorizedIssuer, 0, deadline);
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.IssuerNotAuthorized.selector, s_unauthorizedIssuer));
-        s_sender.registerDocumentBySig(DOCUMENT_CID, METADATA_COMMITMENT, s_unauthorizedIssuer, deadline, signature);
+        s_sender.registerDocumentBySig(
+            DOCUMENT_DIGEST, DOCUMENT_CID, METADATA_COMMITMENT, s_unauthorizedIssuer, deadline, signature
+        );
         assertEq(s_sender.issuerNonce(s_unauthorizedIssuer), 0);
     }
 
@@ -78,14 +87,29 @@ contract EtherdocProvenanceTest is Test {
         bytes memory signature = _signRegistration(ISSUER_PRIVATE_KEY, s_issuer, 0, deadline);
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.SignatureExpired.selector, deadline));
-        s_sender.registerDocumentBySig(DOCUMENT_CID, METADATA_COMMITMENT, s_issuer, deadline, signature);
+        s_sender.registerDocumentBySig(
+            DOCUMENT_DIGEST, DOCUMENT_CID, METADATA_COMMITMENT, s_issuer, deadline, signature
+        );
+        assertEq(s_sender.issuerNonce(s_issuer), 0);
+    }
+
+    function test_registrationSignatureBindsCIDMetadata() external {
+        s_sender.setIssuerAuthorization(s_issuer, true);
+        uint256 deadline = block.timestamp + 1 days;
+        bytes memory signature = _signRegistration(ISSUER_PRIVATE_KEY, s_issuer, 0, deadline);
+        string memory substitutedCID = CIDTestHelper.cidForDigest(0x70, sha256("substituted dag root"));
+
+        vm.expectPartialRevert(EtherdocSender.InvalidIssuerSignature.selector);
+        s_sender.registerDocumentBySig(
+            DOCUMENT_DIGEST, substitutedCID, METADATA_COMMITMENT, s_issuer, deadline, signature
+        );
         assertEq(s_sender.issuerNonce(s_issuer), 0);
     }
 
     function test_relayerCanRevokeWithFreshIssuerSignature() external {
         s_sender.setIssuerAuthorization(s_issuer, true);
         vm.prank(s_issuer);
-        bytes32 documentId = s_sender.registerDocument(DOCUMENT_CID, METADATA_COMMITMENT);
+        bytes32 documentId = s_sender.registerDocument(DOCUMENT_DIGEST, DOCUMENT_CID, METADATA_COMMITMENT);
 
         uint256 deadline = block.timestamp + 1 days;
         bytes32 digest = s_sender.getRevokeDocumentDigest(s_issuer, documentId, 1, 0, deadline);
@@ -108,10 +132,12 @@ contract EtherdocProvenanceTest is Test {
     function test_supersessionLinksRecordsAndKeepsOldHistory() external {
         s_sender.setIssuerAuthorization(s_issuer, true);
         vm.startPrank(s_issuer);
-        bytes32 oldDocumentId = s_sender.registerDocument(DOCUMENT_CID, METADATA_COMMITMENT);
+        bytes32 oldDocumentId = s_sender.registerDocument(DOCUMENT_DIGEST, DOCUMENT_CID, METADATA_COMMITMENT);
         vm.warp(block.timestamp + 1 hours);
-        string memory replacementCID = "ipfs://bafy-replacement";
-        bytes32 newDocumentId = s_sender.supersedeDocument(oldDocumentId, replacementCID, bytes32(uint256(123)));
+        bytes32 replacementDigest = CIDTestHelper.digestFor("replacement");
+        string memory replacementCID = CIDTestHelper.rawCIDFor("replacement");
+        bytes32 newDocumentId =
+            s_sender.supersedeDocument(oldDocumentId, replacementDigest, replacementCID, bytes32(uint256(123)));
         vm.stopPrank();
 
         EtherdocTypes.DocumentRecord memory oldDocument = s_sender.getDocument(oldDocumentId);
@@ -137,11 +163,11 @@ contract EtherdocProvenanceTest is Test {
     function test_relayerCanSupersedeWithFreshIssuerSignature() external {
         s_sender.setIssuerAuthorization(s_issuer, true);
         vm.prank(s_issuer);
-        bytes32 oldDocumentId = s_sender.registerDocument(DOCUMENT_CID, METADATA_COMMITMENT);
+        bytes32 oldDocumentId = s_sender.registerDocument(DOCUMENT_DIGEST, DOCUMENT_CID, METADATA_COMMITMENT);
 
-        string memory replacementCID = "ipfs://bafy-signed-replacement";
-        bytes32 replacementCommitment = keccak256(bytes(replacementCID));
-        bytes32 newDocumentId = s_sender.computeDocumentId(s_issuer, replacementCID);
+        bytes32 replacementDigest = CIDTestHelper.digestFor("signed-replacement");
+        string memory replacementCID = CIDTestHelper.rawCIDFor("signed-replacement");
+        bytes32 newDocumentId = s_sender.computeDocumentId(s_issuer, replacementDigest);
         bytes32 replacementMetadata = keccak256("replacement metadata");
         uint256 deadline = block.timestamp + 1 days;
         bytes32 structHash = keccak256(
@@ -151,7 +177,9 @@ contract EtherdocProvenanceTest is Test {
                 oldDocumentId,
                 uint64(1),
                 newDocumentId,
-                replacementCommitment,
+                replacementDigest,
+                uint8(0x55),
+                replacementDigest,
                 replacementMetadata,
                 uint256(0),
                 deadline
@@ -161,7 +189,7 @@ contract EtherdocProvenanceTest is Test {
 
         vm.prank(address(0xBEEF));
         bytes32 returnedDocumentId = s_sender.supersedeDocumentBySig(
-            oldDocumentId, replacementCID, replacementMetadata, s_issuer, deadline, signature
+            oldDocumentId, replacementDigest, replacementCID, replacementMetadata, s_issuer, deadline, signature
         );
 
         EtherdocTypes.DocumentRecord memory oldDocument = s_sender.getDocument(oldDocumentId);
@@ -176,24 +204,24 @@ contract EtherdocProvenanceTest is Test {
 
         vm.expectPartialRevert(EtherdocSender.InvalidIssuerSignature.selector);
         s_sender.supersedeDocumentBySig(
-            oldDocumentId, replacementCID, replacementMetadata, s_issuer, deadline, signature
+            oldDocumentId, replacementDigest, replacementCID, replacementMetadata, s_issuer, deadline, signature
         );
     }
 
     function test_verificationSeparatesIntegrityFromValidity() external {
-        bytes32 documentId = s_sender.registerDocument(DOCUMENT_CID, METADATA_COMMITMENT);
+        bytes32 documentId = s_sender.registerDocument(DOCUMENT_DIGEST, DOCUMENT_CID, METADATA_COMMITMENT);
 
         (EtherdocTypes.DocumentRecord memory activeRecord, bool integrityMatches, bool isActive) =
-            s_sender.verifyDocument(documentId, DOCUMENT_CID);
+            s_sender.verifyDocument(documentId, DOCUMENT_DIGEST);
         assertEq(activeRecord.issuer, address(this));
         assertTrue(integrityMatches);
         assertTrue(isActive);
 
-        (, bool wrongIntegrity,) = s_sender.verifyDocument(documentId, "ipfs://tampered");
+        (, bool wrongIntegrity,) = s_sender.verifyDocument(documentId, sha256("tampered"));
         assertFalse(wrongIntegrity);
 
         s_sender.revokeDocument(documentId);
-        (, bool retainedIntegrity, bool remainsActive) = s_sender.verifyDocument(documentId, DOCUMENT_CID);
+        (, bool retainedIntegrity, bool remainsActive) = s_sender.verifyDocument(documentId, DOCUMENT_DIGEST);
         assertTrue(retainedIntegrity);
         assertFalse(remainsActive);
     }
@@ -203,8 +231,9 @@ contract EtherdocProvenanceTest is Test {
         view
         returns (bytes memory)
     {
-        bytes32 digest =
-            s_sender.getRegisterDocumentDigest(_issuer, DOCUMENT_CID, METADATA_COMMITMENT, _nonce, _deadline);
+        bytes32 digest = s_sender.getRegisterDocumentDigest(
+            _issuer, DOCUMENT_DIGEST, DOCUMENT_CID, METADATA_COMMITMENT, _nonce, _deadline
+        );
         return _sign(_privateKey, digest);
     }
 
@@ -217,7 +246,7 @@ contract EtherdocProvenanceTest is Test {
         bytes32 domainTypeHash =
             keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
         bytes32 domainSeparator = keccak256(
-            abi.encode(domainTypeHash, keccak256("Etherdoc"), keccak256("1"), block.chainid, address(s_sender))
+            abi.encode(domainTypeHash, keccak256("Etherdoc"), keccak256("2"), block.chainid, address(s_sender))
         );
         return keccak256(abi.encodePacked("\x19\x01", domainSeparator, _structHash));
     }

@@ -22,13 +22,13 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
     using SafeERC20 for IERC20;
 
     bytes32 public constant REGISTER_DOCUMENT_TYPEHASH = keccak256(
-        "RegisterDocument(address issuer,bytes32 documentId,bytes32 contentCommitment,bytes32 metadataCommitment,uint256 nonce,uint256 deadline)"
+        "RegisterDocument(address issuer,bytes32 documentId,bytes32 contentDigest,uint8 cidCodec,bytes32 cidDigest,bytes32 metadataCommitment,uint256 nonce,uint256 deadline)"
     );
     bytes32 public constant REVOKE_DOCUMENT_TYPEHASH = keccak256(
         "RevokeDocument(address issuer,bytes32 documentId,uint64 currentVersion,uint256 nonce,uint256 deadline)"
     );
     bytes32 public constant SUPERSEDE_DOCUMENT_TYPEHASH = keccak256(
-        "SupersedeDocument(address issuer,bytes32 oldDocumentId,uint64 currentVersion,bytes32 newDocumentId,bytes32 newContentCommitment,bytes32 metadataCommitment,uint256 nonce,uint256 deadline)"
+        "SupersedeDocument(address issuer,bytes32 oldDocumentId,uint64 currentVersion,bytes32 newDocumentId,bytes32 newContentDigest,uint8 newCidCodec,bytes32 newCidDigest,bytes32 metadataCommitment,uint256 nonce,uint256 deadline)"
     );
 
     enum DispatchStatus {
@@ -57,15 +57,18 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         bytes32 oldDocumentId;
         uint64 currentVersion;
         bytes32 newDocumentId;
-        bytes32 newContentCommitment;
+        bytes32 newContentDigest;
+        uint8 newCidCodec;
+        bytes32 newCidDigest;
         bytes32 metadataCommitment;
         uint256 nonce;
         uint256 deadline;
     }
 
     error NotEnoughBalance(uint256 currentBalance, uint256 calculatedFees);
+    error InvalidContentDigest();
     error InvalidDocumentCID();
-    error DocumentCIDTooLong(uint256 actualLength, uint256 maximumLength);
+    error RawCIDContentDigestMismatch(bytes32 contentDigest, bytes32 cidDigest);
     error PayloadTooLarge(uint256 actualLength, uint256 maximumLength);
     error InvalidIssuerAddress();
     error IssuerNotAuthorized(address issuer);
@@ -91,9 +94,11 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
     event IssuerAuthorizationUpdated(address indexed issuer, bool authorized);
     event DocumentRegistered(
         bytes32 indexed documentId,
-        bytes32 indexed contentCommitment,
+        bytes32 indexed contentDigest,
         address indexed issuer,
         string documentCID,
+        uint8 cidCodec,
+        bytes32 cidDigest,
         bytes32 metadataCommitment,
         uint256 sourceChainId,
         uint64 registeredAt,
@@ -150,7 +155,7 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         address _initialIssuer,
         address _initialOperator,
         address _initialPauser
-    ) EtherdocGovernance(_governance) EIP712("Etherdoc", "1") {
+    ) EtherdocGovernance(_governance) EIP712("Etherdoc", "2") {
         i_router = IRouterClient(_router);
         i_linkToken = IERC20(_link);
         if (_initialIssuer == address(0)) {
@@ -178,48 +183,58 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
 
     /**
      * @notice Registers a canonical document issued directly by the caller.
-     * @param _documentCID The Content Identifier (CID) of the document.
-     * @return documentId The deterministic identifier derived from issuer and CID commitment.
+     * @param _contentDigest SHA-256 of the exact file bytes available through the CID.
+     * @param _documentCID Canonical CIDv1 in the Etherdoc IPFS profile.
+     * @return documentId The deterministic identifier derived from issuer and file digest.
      */
-    function registerDocument(string calldata _documentCID)
+    function registerDocument(bytes32 _contentDigest, string calldata _documentCID)
         external
         whenRegistrationNotPaused
         returns (bytes32 documentId)
     {
-        return _registerDocument(_documentCID, bytes32(0), msg.sender);
+        return _registerDocument(_contentDigest, _documentCID, bytes32(0), msg.sender);
     }
 
     /**
      * @notice Registers a canonical document with an optional non-PII metadata commitment.
      */
-    function registerDocument(string calldata _documentCID, bytes32 _metadataCommitment)
+    function registerDocument(bytes32 _contentDigest, string calldata _documentCID, bytes32 _metadataCommitment)
         external
         whenRegistrationNotPaused
         returns (bytes32 documentId)
     {
-        return _registerDocument(_documentCID, _metadataCommitment, msg.sender);
+        return _registerDocument(_contentDigest, _documentCID, _metadataCommitment, msg.sender);
     }
 
     /**
      * @notice Lets a relayer register a document while preserving the EIP-712 signer's provenance.
      */
     function registerDocumentBySig(
+        bytes32 _contentDigest,
         string calldata _documentCID,
         bytes32 _metadataCommitment,
         address _issuer,
         uint256 _deadline,
         bytes calldata _signature
     ) external whenRegistrationNotPaused returns (bytes32 documentId) {
-        bytes32 commitment = EtherdocTypes.contentCommitment(_documentCID);
-        documentId = EtherdocTypes.documentId(_issuer, commitment);
+        (uint8 cidCodec, bytes32 cidDigest) = _validateContentIdentifier(_contentDigest, _documentCID);
+        documentId = EtherdocTypes.documentId(_issuer, _contentDigest);
         uint256 nonce = s_issuerNonces[_issuer];
         bytes32 structHash = keccak256(
             abi.encode(
-                REGISTER_DOCUMENT_TYPEHASH, _issuer, documentId, commitment, _metadataCommitment, nonce, _deadline
+                REGISTER_DOCUMENT_TYPEHASH,
+                _issuer,
+                documentId,
+                _contentDigest,
+                cidCodec,
+                cidDigest,
+                _metadataCommitment,
+                nonce,
+                _deadline
             )
         );
         _validateAndConsumeSignature(_issuer, _deadline, structHash, _signature);
-        return _registerDocument(_documentCID, _metadataCommitment, _issuer);
+        return _registerDocument(_contentDigest, _documentCID, _metadataCommitment, _issuer);
     }
 
     /**
@@ -248,12 +263,13 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
     /**
      * @notice Supersedes an active record with a new CID while retaining both records.
      */
-    function supersedeDocument(bytes32 _oldDocumentId, string calldata _newDocumentCID, bytes32 _metadataCommitment)
-        external
-        whenRegistrationNotPaused
-        returns (bytes32 newDocumentId)
-    {
-        return _supersedeDocument(_oldDocumentId, _newDocumentCID, _metadataCommitment, msg.sender);
+    function supersedeDocument(
+        bytes32 _oldDocumentId,
+        bytes32 _newContentDigest,
+        string calldata _newDocumentCID,
+        bytes32 _metadataCommitment
+    ) external whenRegistrationNotPaused returns (bytes32 newDocumentId) {
+        return _supersedeDocument(_oldDocumentId, _newContentDigest, _newDocumentCID, _metadataCommitment, msg.sender);
     }
 
     /**
@@ -261,28 +277,31 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
      */
     function supersedeDocumentBySig(
         bytes32 _oldDocumentId,
+        bytes32 _newContentDigest,
         string calldata _newDocumentCID,
         bytes32 _metadataCommitment,
         address _issuer,
         uint256 _deadline,
         bytes calldata _signature
     ) external whenRegistrationNotPaused returns (bytes32 newDocumentId) {
-        bytes32 newCommitment = EtherdocTypes.contentCommitment(_newDocumentCID);
-        newDocumentId = EtherdocTypes.documentId(_issuer, newCommitment);
+        (uint8 newCidCodec, bytes32 newCidDigest) = _validateContentIdentifier(_newContentDigest, _newDocumentCID);
+        newDocumentId = EtherdocTypes.documentId(_issuer, _newContentDigest);
         EtherdocTypes.DocumentRecord storage oldDocument = s_documents[_oldDocumentId];
         SupersedeAuthorization memory authorization = SupersedeAuthorization({
             issuer: _issuer,
             oldDocumentId: _oldDocumentId,
             currentVersion: oldDocument.version,
             newDocumentId: newDocumentId,
-            newContentCommitment: newCommitment,
+            newContentDigest: _newContentDigest,
+            newCidCodec: newCidCodec,
+            newCidDigest: newCidDigest,
             metadataCommitment: _metadataCommitment,
             nonce: s_issuerNonces[_issuer],
             deadline: _deadline
         });
         bytes32 structHash = _supersedeStructHash(authorization);
         _validateAndConsumeSignature(_issuer, _deadline, structHash, _signature);
-        return _supersedeDocument(_oldDocumentId, _newDocumentCID, _metadataCommitment, _issuer);
+        return _supersedeDocument(_oldDocumentId, _newContentDigest, _newDocumentCID, _metadataCommitment, _issuer);
     }
 
     /**
@@ -553,34 +572,42 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         return s_dispatchPaused;
     }
 
-    function computeDocumentId(address _issuer, string calldata _documentCID) external pure returns (bytes32) {
-        return EtherdocTypes.documentId(_issuer, EtherdocTypes.contentCommitment(_documentCID));
+    function computeDocumentId(address _issuer, bytes32 _contentDigest) external pure returns (bytes32) {
+        return EtherdocTypes.documentId(_issuer, _contentDigest);
     }
 
-    function verifyDocument(bytes32 _documentId, string calldata _documentCID)
+    function verifyDocument(bytes32 _documentId, bytes32 _contentDigest)
         external
         view
         returns (EtherdocTypes.DocumentRecord memory document, bool integrityMatches, bool isActive)
     {
         document = s_documents[_documentId];
-        integrityMatches = document.contentCommitment == EtherdocTypes.contentCommitment(_documentCID)
-            && document.documentId == _documentId;
+        integrityMatches = document.contentDigest == _contentDigest && document.documentId == _documentId;
         isActive = document.status == EtherdocTypes.DocumentStatus.ACTIVE;
     }
 
     function getRegisterDocumentDigest(
         address _issuer,
+        bytes32 _contentDigest,
         string calldata _documentCID,
         bytes32 _metadataCommitment,
         uint256 _nonce,
         uint256 _deadline
     ) external view returns (bytes32) {
-        bytes32 commitment = EtherdocTypes.contentCommitment(_documentCID);
-        bytes32 documentId = EtherdocTypes.documentId(_issuer, commitment);
+        (uint8 cidCodec, bytes32 cidDigest) = _validateContentIdentifier(_contentDigest, _documentCID);
+        bytes32 documentId = EtherdocTypes.documentId(_issuer, _contentDigest);
         return _hashTypedDataV4(
             keccak256(
                 abi.encode(
-                    REGISTER_DOCUMENT_TYPEHASH, _issuer, documentId, commitment, _metadataCommitment, _nonce, _deadline
+                    REGISTER_DOCUMENT_TYPEHASH,
+                    _issuer,
+                    documentId,
+                    _contentDigest,
+                    cidCodec,
+                    cidDigest,
+                    _metadataCommitment,
+                    _nonce,
+                    _deadline
                 )
             )
         );
@@ -598,17 +625,18 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         );
     }
 
-    function _registerDocument(string calldata _documentCID, bytes32 _metadataCommitment, address _issuer)
-        private
-        returns (bytes32 documentId)
-    {
+    function _registerDocument(
+        bytes32 _contentDigest,
+        string calldata _documentCID,
+        bytes32 _metadataCommitment,
+        address _issuer
+    ) private returns (bytes32 documentId) {
         if (!s_authorizedIssuers[_issuer]) {
             revert IssuerNotAuthorized(_issuer);
         }
-        _validateDocumentCID(_documentCID);
+        (uint8 cidCodec, bytes32 cidDigest) = _validateContentIdentifier(_contentDigest, _documentCID);
 
-        bytes32 commitment = EtherdocTypes.contentCommitment(_documentCID);
-        documentId = EtherdocTypes.documentId(_issuer, commitment);
+        documentId = EtherdocTypes.documentId(_issuer, _contentDigest);
         if (s_documents[documentId].status != EtherdocTypes.DocumentStatus.UNKNOWN) {
             revert DocumentAlreadyRegistered(documentId);
         }
@@ -616,9 +644,11 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         uint64 registeredAt = uint64(block.timestamp);
         s_documents[documentId] = EtherdocTypes.DocumentRecord({
             documentId: documentId,
-            contentCommitment: commitment,
+            contentDigest: _contentDigest,
             metadataCommitment: _metadataCommitment,
             documentCID: _documentCID,
+            cidCodec: cidCodec,
+            cidDigest: cidDigest,
             issuer: _issuer,
             sourceChainId: block.chainid,
             registeredAt: registeredAt,
@@ -632,9 +662,11 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
 
         emit DocumentRegistered(
             documentId,
-            commitment,
+            _contentDigest,
             _issuer,
             _documentCID,
+            cidCodec,
+            cidDigest,
             _metadataCommitment,
             block.chainid,
             registeredAt,
@@ -657,6 +689,7 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
 
     function _supersedeDocument(
         bytes32 _oldDocumentId,
+        bytes32 _newContentDigest,
         string calldata _newDocumentCID,
         bytes32 _metadataCommitment,
         address _issuer
@@ -664,7 +697,7 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         EtherdocTypes.DocumentRecord storage oldDocument = s_documents[_oldDocumentId];
         _requireActiveDocumentIssuer(oldDocument, _oldDocumentId, _issuer);
 
-        newDocumentId = _registerDocument(_newDocumentCID, _metadataCommitment, _issuer);
+        newDocumentId = _registerDocument(_newContentDigest, _newDocumentCID, _metadataCommitment, _issuer);
         EtherdocTypes.DocumentRecord storage newDocument = s_documents[newDocumentId];
         newDocument.supersedes = _oldDocumentId;
 
@@ -715,13 +748,21 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         s_issuerNonces[_issuer]++;
     }
 
-    function _validateDocumentCID(string calldata _documentCID) private pure {
-        uint256 cidLength = bytes(_documentCID).length;
-        if (cidLength == 0) {
+    function _validateContentIdentifier(bytes32 _contentDigest, string calldata _documentCID)
+        private
+        pure
+        returns (uint8 cidCodec, bytes32 cidDigest)
+    {
+        if (_contentDigest == bytes32(0)) {
+            revert InvalidContentDigest();
+        }
+        bool valid;
+        (valid, cidCodec, cidDigest) = EtherdocTypes.decodeCanonicalCID(_documentCID);
+        if (!valid) {
             revert InvalidDocumentCID();
         }
-        if (cidLength > EtherdocTypes.MAX_DOCUMENT_CID_LENGTH) {
-            revert DocumentCIDTooLong(cidLength, EtherdocTypes.MAX_DOCUMENT_CID_LENGTH);
+        if (cidCodec == EtherdocTypes.CID_CODEC_RAW && cidDigest != _contentDigest) {
+            revert RawCIDContentDigestMismatch(_contentDigest, cidDigest);
         }
     }
 
@@ -733,7 +774,9 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
                 _authorization.oldDocumentId,
                 _authorization.currentVersion,
                 _authorization.newDocumentId,
-                _authorization.newContentCommitment,
+                _authorization.newContentDigest,
+                _authorization.newCidCodec,
+                _authorization.newCidDigest,
                 _authorization.metadataCommitment,
                 _authorization.nonce,
                 _authorization.deadline

@@ -9,6 +9,7 @@ import {LinkToken} from "@chainlink/local/src/shared/LinkToken.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocReceiver} from "../src/EtherdocReceiver.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
+import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
 
 contract DeferredRouter is IRouterClient {
     enum ExecutionState {
@@ -131,7 +132,8 @@ contract DeferredRouter is IRouterClient {
 contract EtherdocLifecycleTest is Test {
     uint64 private constant DESTINATION_A = 11;
     uint64 private constant DESTINATION_B = 22;
-    string private constant DOCUMENT_CID = "ipfs://bafy-lifecycle";
+    bytes32 private constant DOCUMENT_DIGEST = 0xf31168c67a1482e74cb97ec041650a193c18a4bb0847d656aa70707e72cd4e9d;
+    string private constant DOCUMENT_CID = "bafkreihtcfumm6quqltuzol6ybawkcqzhqmkjoyii7lfnktqob7hftkotu";
 
     DeferredRouter private s_router;
     LinkToken private s_link;
@@ -154,7 +156,7 @@ contract EtherdocLifecycleTest is Test {
         assertTrue(s_link.transfer(address(s_sender), 100 ether));
         s_sender.configureRemote(DESTINATION_A, address(s_receiverA), 500_000, true);
         s_sender.configureRemote(DESTINATION_B, address(s_receiverB), 500_000, true);
-        s_documentId = s_sender.registerDocument(DOCUMENT_CID);
+        s_documentId = s_sender.registerDocument(DOCUMENT_DIGEST, DOCUMENT_CID);
     }
 
     function test_pendingDispatchIsNotReportedAsReceived() external {
@@ -169,7 +171,7 @@ contract EtherdocLifecycleTest is Test {
         assertEq(uint8(document.status), uint8(EtherdocTypes.DocumentStatus.ACTIVE));
         assertEq(dispatch.messageId, messageId);
         assertEq(uint8(dispatch.status), uint8(EtherdocSender.DispatchStatus.DISPATCHED));
-        assertEq(payload.schemaVersion, 1);
+        assertEq(payload.schemaVersion, 2);
         assertEq(uint8(payload.operation), uint8(EtherdocTypes.Operation.REGISTER));
         assertEq(payload.documentId, s_documentId);
         assertEq(payload.documentVersion, 1);
@@ -362,8 +364,12 @@ contract EtherdocLifecycleTest is Test {
 
     function test_supersessionPayloadLinksBothRecordsWithExplicitOperations() external {
         _allowReceiver(s_receiverA);
-        bytes32 replacementId =
-            s_sender.supersedeDocument(s_documentId, "ipfs://bafy-lifecycle-replacement", bytes32(uint256(123)));
+        bytes32 replacementId = s_sender.supersedeDocument(
+            s_documentId,
+            CIDTestHelper.digestFor("lifecycle-replacement"),
+            CIDTestHelper.rawCIDFor("lifecycle-replacement"),
+            bytes32(uint256(123))
+        );
 
         bytes32 supersedeMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
         bytes32 replacementMessageId = s_sender.dispatchDocument(replacementId, DESTINATION_A, s_router.FEE());
@@ -403,7 +409,7 @@ contract EtherdocLifecycleTest is Test {
         _allowReceiver(s_receiverA);
         EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(s_documentId);
         EtherdocTypes.DocumentPayload memory payload = EtherdocTypes.DocumentPayload({
-            schemaVersion: 1,
+            schemaVersion: 2,
             operation: EtherdocTypes.Operation.REVOKE,
             documentId: document.documentId,
             documentVersion: document.version + 1,
@@ -441,11 +447,11 @@ contract EtherdocLifecycleTest is Test {
         assertFalse(s_receiverA.isMessageProcessed(operationMessageId));
     }
 
-    function test_receiverRejectsUnsupportedSchemaAndEmptyCID() external {
+    function test_receiverRejectsUnsupportedSchemaAndMalformedCID() external {
         _allowReceiver(s_receiverA);
         EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(s_documentId);
         EtherdocTypes.DocumentPayload memory payload = EtherdocTypes.DocumentPayload({
-            schemaVersion: 2,
+            schemaVersion: 3,
             operation: EtherdocTypes.Operation.REGISTER,
             documentId: document.documentId,
             documentVersion: document.version,
@@ -453,24 +459,26 @@ contract EtherdocLifecycleTest is Test {
         });
 
         bytes32 schemaMessageId = keccak256("invalid-schema");
-        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidPayloadSchema.selector, uint16(2), uint16(1)));
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidPayloadSchema.selector, uint16(3), uint16(2)));
         _deliverPayload(schemaMessageId, payload);
 
-        payload.schemaVersion = 1;
+        payload.schemaVersion = 2;
         payload.document.documentCID = "";
         bytes32 emptyCIDMessageId = keccak256("empty-cid");
-        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidDocumentCID.selector, uint256(0)));
+        vm.expectRevert(EtherdocReceiver.InvalidDocumentCID.selector);
         _deliverPayload(emptyCIDMessageId, payload);
 
-        uint256 oversizedCIDLength = s_receiverA.MAX_DOCUMENT_CID_LENGTH() + 1;
-        payload.document.documentCID = string(new bytes(oversizedCIDLength));
-        bytes32 oversizedCIDMessageId = keccak256("oversized-cid");
-        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidDocumentCID.selector, oversizedCIDLength));
-        _deliverPayload(oversizedCIDMessageId, payload);
+        payload.document.documentCID = DOCUMENT_CID;
+        payload.document.cidDigest = sha256("conflicting CID metadata");
+        bytes32 metadataMessageId = keccak256("invalid-cid-metadata");
+        vm.expectRevert(
+            abi.encodeWithSelector(EtherdocReceiver.InvalidCIDMetadata.selector, payload.document.documentId)
+        );
+        _deliverPayload(metadataMessageId, payload);
 
         assertFalse(s_receiverA.isMessageProcessed(schemaMessageId));
         assertFalse(s_receiverA.isMessageProcessed(emptyCIDMessageId));
-        assertFalse(s_receiverA.isMessageProcessed(oversizedCIDMessageId));
+        assertFalse(s_receiverA.isMessageProcessed(metadataMessageId));
     }
 
     function test_trustedRemotePairsDoNotAllowCrossProduct() external {
@@ -482,10 +490,10 @@ contract EtherdocLifecycleTest is Test {
         s_receiverA.configureTrustedRemote(sourceA, senderX, true);
         s_receiverA.configureTrustedRemote(sourceB, senderY, true);
 
-        bytes32 messageAX = _queueDocument("ipfs://pair-a-x");
-        bytes32 messageBY = _queueDocument("ipfs://pair-b-y");
-        bytes32 messageAY = _queueDocument("ipfs://pair-a-y");
-        bytes32 messageBX = _queueDocument("ipfs://pair-b-x");
+        bytes32 messageAX = _queueDocument("pair-a-x");
+        bytes32 messageBY = _queueDocument("pair-b-y");
+        bytes32 messageAY = _queueDocument("pair-a-y");
+        bytes32 messageBX = _queueDocument("pair-b-x");
 
         s_router.deliverAs(messageAX, sourceA, senderX);
         s_router.deliverAs(messageBY, sourceB, senderY);
@@ -531,8 +539,9 @@ contract EtherdocLifecycleTest is Test {
         _receiver.configureTrustedRemote(s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender), true);
     }
 
-    function _queueDocument(string memory _documentCID) private returns (bytes32 messageId) {
-        bytes32 documentId = s_sender.registerDocument(_documentCID);
+    function _queueDocument(string memory _content) private returns (bytes32 messageId) {
+        bytes32 documentId =
+            s_sender.registerDocument(CIDTestHelper.digestFor(_content), CIDTestHelper.rawCIDFor(_content));
         return s_sender.dispatchDocument(documentId, DESTINATION_A, s_router.FEE());
     }
 

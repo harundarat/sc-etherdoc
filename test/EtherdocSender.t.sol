@@ -12,6 +12,7 @@ import {EtherdocGovernance} from "../src/EtherdocGovernance.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 import {ApprovalRestrictedToken} from "./mocks/ApprovalRestrictedToken.sol";
+import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
 
 contract MockRouter is IRouterClient {
     error SimulatedLaneFailure(uint64 destinationChainSelector);
@@ -78,10 +79,10 @@ contract EtherdocSenderTest is Test {
     uint64 private constant DESTINATION_B = 22;
     uint256 private constant GAS_LIMIT_A = 350_000;
     uint256 private constant GAS_LIMIT_B = 600_000;
-    uint256 private constant MAX_DOCUMENT_CID_LENGTH = 256;
     address private constant RECEIVER_A = address(0xA11CE);
     address private constant RECEIVER_B = address(0xB0B);
-    string private constant DOCUMENT_CID = "ipfs://bafy-document";
+    bytes32 private constant DOCUMENT_DIGEST = 0x43cc23fa52b87b4cc1d02b5b114154151d6adddb17c9fddc06b027fa99e24008;
+    string private constant DOCUMENT_CID = "bafkreicdzqr7uuvypngmdubllmiucvavdvvn3wyxzh65ybvqe75jtysaba";
 
     MockRouter private s_router;
     LinkToken private s_link;
@@ -96,52 +97,77 @@ contract EtherdocSenderTest is Test {
         assertTrue(s_link.transfer(address(s_sender), 100 ether));
         s_sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
         s_sender.configureRemote(DESTINATION_B, RECEIVER_B, GAS_LIMIT_B, true);
-        s_documentId = s_sender.registerDocument(DOCUMENT_CID);
+        s_documentId = s_sender.registerDocument(DOCUMENT_DIGEST, DOCUMENT_CID);
     }
 
     function test_registersCanonicalDocumentOnce() external {
         EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(s_documentId);
 
-        assertEq(s_documentId, s_sender.computeDocumentId(address(this), DOCUMENT_CID));
+        assertEq(sha256(bytes("document")), DOCUMENT_DIGEST);
+        assertEq(CIDTestHelper.rawCIDFor("document"), DOCUMENT_CID);
+        assertEq(s_documentId, s_sender.computeDocumentId(address(this), DOCUMENT_DIGEST));
         assertEq(document.documentId, s_documentId);
-        assertEq(document.contentCommitment, keccak256(bytes(DOCUMENT_CID)));
+        assertEq(document.contentDigest, DOCUMENT_DIGEST);
+        assertEq(document.cidCodec, 0x55);
+        assertEq(document.cidDigest, DOCUMENT_DIGEST);
         assertEq(document.issuer, address(this));
         assertEq(document.sourceChainId, block.chainid);
         assertEq(document.documentCID, DOCUMENT_CID);
         assertEq(document.registeredAt, block.timestamp);
         assertEq(document.updatedAt, block.timestamp);
         assertEq(document.version, 1);
-        assertEq(document.schemaVersion, 1);
+        assertEq(document.schemaVersion, 2);
         assertEq(uint8(document.status), uint8(EtherdocTypes.DocumentStatus.ACTIVE));
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.DocumentAlreadyRegistered.selector, s_documentId));
-        s_sender.registerDocument(DOCUMENT_CID);
+        s_sender.registerDocument(DOCUMENT_DIGEST, DOCUMENT_CID);
     }
 
-    function test_rejectsEmptyAndOversizedCID() external {
+    function test_rejectsZeroDigestAndNonCanonicalCID() external {
+        vm.expectRevert(EtherdocSender.InvalidContentDigest.selector);
+        s_sender.registerDocument(bytes32(0), DOCUMENT_CID);
+
         vm.expectRevert(EtherdocSender.InvalidDocumentCID.selector);
-        s_sender.registerDocument("");
+        s_sender.registerDocument(DOCUMENT_DIGEST, "");
 
-        uint256 maximumLength = MAX_DOCUMENT_CID_LENGTH;
-        string memory oversizedCID = string(new bytes(maximumLength + 1));
-        vm.expectRevert(
-            abi.encodeWithSelector(EtherdocSender.DocumentCIDTooLong.selector, maximumLength + 1, maximumLength)
-        );
-        s_sender.registerDocument(oversizedCID);
+        vm.expectRevert(EtherdocSender.InvalidDocumentCID.selector);
+        s_sender.registerDocument(DOCUMENT_DIGEST, "ipfs://bafkreicdzqr7uuvypngmdubllmiucvavdvvn3wyxzh65ybvqe75jtysaba");
+
+        vm.expectRevert(EtherdocSender.InvalidDocumentCID.selector);
+        s_sender.registerDocument(DOCUMENT_DIGEST, "BAFKREICDZQR7UUVYPNGM DUBLLMIUCVAVDVVN3WYXZH65YBVQE75JTYSABA");
+
+        vm.expectRevert(EtherdocSender.InvalidDocumentCID.selector);
+        s_sender.registerDocument(DOCUMENT_DIGEST, CIDTestHelper.cidForDigest(0x71, DOCUMENT_DIGEST));
+
+        bytes memory nonCanonicalPadding = bytes(DOCUMENT_CID);
+        nonCanonicalPadding[nonCanonicalPadding.length - 1] = "b";
+        vm.expectRevert(EtherdocSender.InvalidDocumentCID.selector);
+        s_sender.registerDocument(DOCUMENT_DIGEST, string(nonCanonicalPadding));
     }
 
-    function test_acceptsMaximumCIDWithinPayloadLimit() external {
-        uint256 maximumLength = MAX_DOCUMENT_CID_LENGTH;
-        bytes memory cidBytes = new bytes(maximumLength);
-        for (uint256 i; i < maximumLength; i++) {
-            cidBytes[i] = "a";
-        }
+    function test_acceptsCanonicalDagPbCIDWithIndependentRawFileDigest() external {
+        bytes32 fileDigest = sha256("dag-pb file bytes");
+        bytes32 dagRootDigest = sha256("dag-pb root block");
+        string memory dagPbCID = CIDTestHelper.cidForDigest(0x70, dagRootDigest);
 
-        bytes32 documentId = s_sender.registerDocument(string(cidBytes));
+        bytes32 documentId = s_sender.registerDocument(fileDigest, dagPbCID);
         bytes32 messageId = s_sender.dispatchDocument(documentId, DESTINATION_A, s_router.FEE());
+        EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(documentId);
 
         assertNotEq(messageId, bytes32(0));
+        assertEq(document.contentDigest, fileDigest);
+        assertEq(document.cidCodec, 0x70);
+        assertEq(document.cidDigest, dagRootDigest);
         assertEq(s_sender.getDispatch(documentId, DESTINATION_A).messageId, messageId);
+    }
+
+    function test_rejectsRawCIDWhoseMultihashDoesNotMatchFileDigest() external {
+        bytes32 wrongDigest = sha256("different file bytes");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(EtherdocSender.RawCIDContentDigestMismatch.selector, wrongDigest, DOCUMENT_DIGEST)
+        );
+        s_sender.registerDocument(wrongDigest, DOCUMENT_CID);
     }
 
     function test_dispatchesOneDocumentToTwoDestinationChains() external {
@@ -196,6 +222,10 @@ contract EtherdocSenderTest is Test {
 
     function test_pauserStopsRegistrationButGovernanceControlsRecovery() external {
         address pauser = makeAddr("pauser");
+        bytes32 pausedRegistrationDigest = CIDTestHelper.digestFor("paused-registration");
+        string memory pausedRegistrationCID = CIDTestHelper.rawCIDFor("paused-registration");
+        bytes32 pausedSupersessionDigest = CIDTestHelper.digestFor("paused-supersession");
+        string memory pausedSupersessionCID = CIDTestHelper.rawCIDFor("paused-supersession");
         s_sender.setPauser(pauser, true);
 
         vm.prank(pauser);
@@ -205,10 +235,10 @@ contract EtherdocSenderTest is Test {
         assertTrue(s_sender.registrationPaused());
 
         vm.expectRevert(EtherdocSender.RegistrationIsPaused.selector);
-        s_sender.registerDocument("ipfs://paused-registration");
+        s_sender.registerDocument(pausedRegistrationDigest, pausedRegistrationCID);
 
         vm.expectRevert(EtherdocSender.RegistrationIsPaused.selector);
-        s_sender.supersedeDocument(s_documentId, "ipfs://paused-supersession", bytes32(0));
+        s_sender.supersedeDocument(s_documentId, pausedSupersessionDigest, pausedSupersessionCID, bytes32(0));
 
         s_sender.revokeDocument(s_documentId);
         assertFalse(s_sender.isDocumentActive(s_documentId));
@@ -221,7 +251,12 @@ contract EtherdocSenderTest is Test {
         emit EtherdocSender.RegistrationUnpaused(address(this));
         s_sender.unpauseRegistration();
         assertFalse(s_sender.registrationPaused());
-        assertNotEq(s_sender.registerDocument("ipfs://registration-restored"), bytes32(0));
+        assertNotEq(
+            s_sender.registerDocument(
+                CIDTestHelper.digestFor("registration-restored"), CIDTestHelper.rawCIDFor("registration-restored")
+            ),
+            bytes32(0)
+        );
     }
 
     function test_pauserStopsDispatchButGovernanceControlsRecovery() external {
@@ -393,7 +428,8 @@ contract EtherdocSenderTest is Test {
         uint256 fee = s_router.FEE();
         EtherdocSender unfundedSender = _deploySender(address(s_link));
         unfundedSender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
-        bytes32 documentId = unfundedSender.registerDocument("ipfs://unfunded");
+        bytes32 documentId =
+            unfundedSender.registerDocument(CIDTestHelper.digestFor("unfunded"), CIDTestHelper.rawCIDFor("unfunded"));
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.NotEnoughBalance.selector, uint256(0), fee));
         unfundedSender.dispatchDocument(documentId, DESTINATION_A, fee);
@@ -405,7 +441,9 @@ contract EtherdocSenderTest is Test {
         token.mint(address(sender), 10 ether);
         sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
         sender.configureRemote(DESTINATION_B, RECEIVER_B, GAS_LIMIT_B, true);
-        bytes32 documentId = sender.registerDocument("ipfs://approval-reset");
+        bytes32 documentId = sender.registerDocument(
+            CIDTestHelper.digestFor("approval-reset"), CIDTestHelper.rawCIDFor("approval-reset")
+        );
 
         sender.dispatchDocument(documentId, DESTINATION_A, s_router.FEE());
         sender.dispatchDocument(documentId, DESTINATION_B, s_router.FEE());
@@ -420,7 +458,9 @@ contract EtherdocSenderTest is Test {
         token.mint(address(sender), 10 ether);
         token.setApprovalsDisabled(true);
         sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
-        bytes32 documentId = sender.registerDocument("ipfs://approval-failure");
+        bytes32 documentId = sender.registerDocument(
+            CIDTestHelper.digestFor("approval-failure"), CIDTestHelper.rawCIDFor("approval-failure")
+        );
 
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(token)));
         sender.dispatchDocument(documentId, DESTINATION_A, fee);
