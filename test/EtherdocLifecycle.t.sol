@@ -144,9 +144,11 @@ contract EtherdocLifecycleTest is Test {
     function setUp() public {
         s_router = new DeferredRouter();
         s_link = new LinkToken();
-        s_sender = new EtherdocSender(address(s_router), address(s_link));
-        s_receiverA = new EtherdocReceiver(address(s_router));
-        s_receiverB = new EtherdocReceiver(address(s_router));
+        s_sender = new EtherdocSender(
+            address(s_router), address(s_link), address(this), address(this), address(this), address(this)
+        );
+        s_receiverA = new EtherdocReceiver(address(s_router), address(this), address(this));
+        s_receiverB = new EtherdocReceiver(address(s_router), address(this), address(this));
         s_sourceChainSelector = s_router.SOURCE_CHAIN_SELECTOR();
 
         assertTrue(s_link.transfer(address(s_sender), 100 ether));
@@ -222,6 +224,46 @@ contract EtherdocLifecycleTest is Test {
         assertEq(uint8(retriedReceipt.status), uint8(EtherdocReceiver.ReceiptStatus.RECEIVED));
         assertTrue(s_receiverA.isMessageProcessed(messageId));
         assertEq(s_receiverA.getMessageDocument(messageId), s_documentId);
+    }
+
+    function test_pausedReceiveFailsSafelyAndSameMessageCanRetryAfterGovernanceUnpause() external {
+        _allowReceiver(s_receiverA);
+        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
+
+        s_receiverA.pauseReceive();
+        assertTrue(s_receiverA.receivePaused());
+
+        (bool pausedAttemptSucceeded, bytes memory pausedReturnData) = s_router.execute(messageId);
+        assertFalse(pausedAttemptSucceeded);
+        assertEq(pausedReturnData, abi.encodeWithSelector(EtherdocReceiver.ReceiveIsPaused.selector));
+        assertFalse(s_receiverA.isMessageProcessed(messageId));
+        assertFalse(s_receiverA.isDocumentReceived(s_documentId));
+
+        s_receiverA.unpauseReceive();
+        assertFalse(s_receiverA.receivePaused());
+
+        (bool retrySucceeded,) = s_router.execute(messageId);
+        assertTrue(retrySucceeded);
+        assertTrue(s_receiverA.isMessageProcessed(messageId));
+        assertTrue(s_receiverA.isDocumentReceived(s_documentId));
+    }
+
+    function test_receiverPauserCannotUnpauseOrChangeTrustedRemote() external {
+        address pauser = makeAddr("receiver-pauser");
+        s_receiverA.setPauser(pauser, true);
+
+        vm.prank(pauser);
+        s_receiverA.pauseReceive();
+
+        vm.prank(pauser);
+        vm.expectRevert(bytes("Only callable by owner"));
+        s_receiverA.unpauseReceive();
+
+        vm.prank(pauser);
+        vm.expectRevert(bytes("Only callable by owner"));
+        s_receiverA.configureTrustedRemote(s_sourceChainSelector, address(s_sender), true);
+
+        s_receiverA.unpauseReceive();
     }
 
     function test_workflowIsCompleteOnlyAfterEveryDestinationHasReceipt() external {

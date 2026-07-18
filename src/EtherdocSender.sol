@@ -2,7 +2,6 @@
 pragma solidity 0.8.24;
 
 import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
-import {OwnerIsCreator} from "@chainlink/contracts/src/v0.8/shared/access/OwnerIsCreator.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
 import {
     IERC20
@@ -16,9 +15,10 @@ import {
 import {
     ECDSA
 } from "@chainlink/contracts/src/v0.8/vendor/openzeppelin-solidity/v5.0.2/contracts/utils/cryptography/ECDSA.sol";
+import {EtherdocGovernance} from "./EtherdocGovernance.sol";
 import {EtherdocTypes} from "./EtherdocTypes.sol";
 
-contract EtherdocSender is OwnerIsCreator, EIP712 {
+contract EtherdocSender is EtherdocGovernance, EIP712 {
     using SafeERC20 for IERC20;
 
     bytes32 public constant REGISTER_DOCUMENT_TYPEHASH = keccak256(
@@ -83,6 +83,10 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
     error FeeExceedsMaximum(uint256 calculatedFees, uint256 maximumFee);
     error InvalidTokenAddress();
     error InvalidWithdrawalRecipient();
+    error RegistrationIsPaused();
+    error RegistrationNotPaused();
+    error DispatchIsPaused();
+    error DispatchNotPaused();
 
     event IssuerAuthorizationUpdated(address indexed issuer, bool authorized);
     event DocumentRegistered(
@@ -107,6 +111,10 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         uint64 indexed destinationChainSelector, address indexed receiver, uint256 gasLimit, bool allowlisted
     );
     event TokenWithdrawn(address indexed token, address indexed recipient, uint256 amount);
+    event RegistrationPaused(address indexed account);
+    event RegistrationUnpaused(address indexed account);
+    event DispatchPaused(address indexed account);
+    event DispatchUnpaused(address indexed account);
     event MessageSent(
         bytes32 indexed messageId,
         bytes32 indexed documentId,
@@ -132,12 +140,40 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
     mapping(uint64 destinationChainSelector => RemoteConfig config) private s_remotes;
     mapping(address issuer => bool authorized) private s_authorizedIssuers;
     mapping(address issuer => uint256 nonce) private s_issuerNonces;
+    bool private s_registrationPaused;
+    bool private s_dispatchPaused;
 
-    constructor(address _router, address _link) EIP712("Etherdoc", "1") {
+    constructor(
+        address _router,
+        address _link,
+        address _governance,
+        address _initialIssuer,
+        address _initialOperator,
+        address _initialPauser
+    ) EtherdocGovernance(_governance) EIP712("Etherdoc", "1") {
         i_router = IRouterClient(_router);
         i_linkToken = IERC20(_link);
-        s_authorizedIssuers[msg.sender] = true;
-        emit IssuerAuthorizationUpdated(msg.sender, true);
+        if (_initialIssuer == address(0)) {
+            revert InvalidIssuerAddress();
+        }
+        s_authorizedIssuers[_initialIssuer] = true;
+        emit IssuerAuthorizationUpdated(_initialIssuer, true);
+        _setRole(OPERATOR_ROLE, _initialOperator, true);
+        _setRole(PAUSER_ROLE, _initialPauser, true);
+    }
+
+    modifier whenRegistrationNotPaused() {
+        if (s_registrationPaused) {
+            revert RegistrationIsPaused();
+        }
+        _;
+    }
+
+    modifier whenDispatchNotPaused() {
+        if (s_dispatchPaused) {
+            revert DispatchIsPaused();
+        }
+        _;
     }
 
     /**
@@ -145,7 +181,11 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
      * @param _documentCID The Content Identifier (CID) of the document.
      * @return documentId The deterministic identifier derived from issuer and CID commitment.
      */
-    function registerDocument(string calldata _documentCID) external returns (bytes32 documentId) {
+    function registerDocument(string calldata _documentCID)
+        external
+        whenRegistrationNotPaused
+        returns (bytes32 documentId)
+    {
         return _registerDocument(_documentCID, bytes32(0), msg.sender);
     }
 
@@ -154,6 +194,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
      */
     function registerDocument(string calldata _documentCID, bytes32 _metadataCommitment)
         external
+        whenRegistrationNotPaused
         returns (bytes32 documentId)
     {
         return _registerDocument(_documentCID, _metadataCommitment, msg.sender);
@@ -168,7 +209,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         address _issuer,
         uint256 _deadline,
         bytes calldata _signature
-    ) external returns (bytes32 documentId) {
+    ) external whenRegistrationNotPaused returns (bytes32 documentId) {
         bytes32 commitment = EtherdocTypes.contentCommitment(_documentCID);
         documentId = EtherdocTypes.documentId(_issuer, commitment);
         uint256 nonce = s_issuerNonces[_issuer];
@@ -209,6 +250,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
      */
     function supersedeDocument(bytes32 _oldDocumentId, string calldata _newDocumentCID, bytes32 _metadataCommitment)
         external
+        whenRegistrationNotPaused
         returns (bytes32 newDocumentId)
     {
         return _supersedeDocument(_oldDocumentId, _newDocumentCID, _metadataCommitment, msg.sender);
@@ -224,7 +266,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         address _issuer,
         uint256 _deadline,
         bytes calldata _signature
-    ) external returns (bytes32 newDocumentId) {
+    ) external whenRegistrationNotPaused returns (bytes32 newDocumentId) {
         bytes32 newCommitment = EtherdocTypes.contentCommitment(_newDocumentCID);
         newDocumentId = EtherdocTypes.documentId(_issuer, newCommitment);
         EtherdocTypes.DocumentRecord storage oldDocument = s_documents[_oldDocumentId];
@@ -254,7 +296,8 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
      */
     function dispatchDocument(bytes32 _documentId, uint64 _destinationChainSelector, uint256 _maximumFee)
         external
-        onlyOwner
+        onlyRole(OPERATOR_ROLE)
+        whenDispatchNotPaused
         returns (bytes32 messageId)
     {
         RemoteConfig memory remote = s_remotes[_destinationChainSelector];
@@ -385,6 +428,46 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         emit IssuerAuthorizationUpdated(_issuer, _authorized);
     }
 
+    function setOperator(address _operator, bool _authorized) external onlyOwner {
+        _setRole(OPERATOR_ROLE, _operator, _authorized);
+    }
+
+    function setPauser(address _pauser, bool _authorized) external onlyOwner {
+        _setRole(PAUSER_ROLE, _pauser, _authorized);
+    }
+
+    function pauseRegistration() external onlyRole(PAUSER_ROLE) {
+        if (s_registrationPaused) {
+            revert RegistrationIsPaused();
+        }
+        s_registrationPaused = true;
+        emit RegistrationPaused(msg.sender);
+    }
+
+    function unpauseRegistration() external onlyOwner {
+        if (!s_registrationPaused) {
+            revert RegistrationNotPaused();
+        }
+        s_registrationPaused = false;
+        emit RegistrationUnpaused(msg.sender);
+    }
+
+    function pauseDispatch() external onlyRole(PAUSER_ROLE) {
+        if (s_dispatchPaused) {
+            revert DispatchIsPaused();
+        }
+        s_dispatchPaused = true;
+        emit DispatchPaused(msg.sender);
+    }
+
+    function unpauseDispatch() external onlyOwner {
+        if (!s_dispatchPaused) {
+            revert DispatchNotPaused();
+        }
+        s_dispatchPaused = false;
+        emit DispatchUnpaused(msg.sender);
+    }
+
     /**
      * @notice Quotes the current LINK fee for a document and configured destination.
      * @dev The Router can return a different fee when dispatchDocument is mined. Callers must set
@@ -460,6 +543,14 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
 
     function issuerNonce(address _issuer) external view returns (uint256) {
         return s_issuerNonces[_issuer];
+    }
+
+    function registrationPaused() external view returns (bool) {
+        return s_registrationPaused;
+    }
+
+    function dispatchPaused() external view returns (bool) {
+        return s_dispatchPaused;
     }
 
     function computeDocumentId(address _issuer, string calldata _documentCID) external pure returns (bytes32) {

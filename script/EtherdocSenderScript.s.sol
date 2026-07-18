@@ -14,12 +14,21 @@ contract EtherdocSenderScript is NetworkConfigScript {
         string memory networkName = vm.envString("NETWORK");
         NetworkConfig memory network = _loadNetwork(networkName);
         _validateCurrentNetwork(network, true);
+        address governance = vm.envAddress("GOVERNANCE");
+        address initialIssuer = vm.envAddress("INITIAL_ISSUER");
+        address operator = vm.envAddress("OPERATOR");
+        address pauser = vm.envAddress("PAUSER");
 
         vm.startBroadcast();
-        etherdocSender = new EtherdocSender(network.router, network.linkToken);
+        etherdocSender =
+            new EtherdocSender(network.router, network.linkToken, governance, initialIssuer, operator, pauser);
         vm.stopBroadcast();
 
         _persistDeployment(networkName, address(etherdocSender), network.receiver);
         console.log("EtherdocSender deployed at:", address(etherdocSender));
+        console.log("Governance:", governance);
+        console.log("Initial issuer:", initialIssuer);
+        console.log("Operator:", operator);
+        console.log("Pauser:", pauser);
     }
 }

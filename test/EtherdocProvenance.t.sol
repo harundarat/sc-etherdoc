@@ -20,7 +20,9 @@ contract EtherdocProvenanceTest is Test {
     function setUp() public {
         MockRouter router = new MockRouter();
         LinkToken link = new LinkToken();
-        s_sender = new EtherdocSender(address(router), address(link));
+        s_sender = new EtherdocSender(
+            address(router), address(link), address(this), address(this), address(this), address(this)
+        );
         s_issuer = vm.addr(ISSUER_PRIVATE_KEY);
         s_unauthorizedIssuer = vm.addr(UNAUTHORIZED_ISSUER_PRIVATE_KEY);
     }

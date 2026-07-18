@@ -14,12 +14,16 @@ contract EtherdocReceiverScript is NetworkConfigScript {
         string memory networkName = vm.envString("NETWORK");
         NetworkConfig memory network = _loadNetwork(networkName);
         _validateCurrentNetwork(network, false);
+        address governance = vm.envAddress("GOVERNANCE");
+        address pauser = vm.envAddress("PAUSER");
 
         vm.startBroadcast();
-        etherdocReceiver = new EtherdocReceiver(network.router);
+        etherdocReceiver = new EtherdocReceiver(network.router, governance, pauser);
         vm.stopBroadcast();
 
         _persistDeployment(networkName, network.sender, address(etherdocReceiver));
         console.log("EtherdocReceiver deployed at:", address(etherdocReceiver));
+        console.log("Governance:", governance);
+        console.log("Pauser:", pauser);
     }
 }

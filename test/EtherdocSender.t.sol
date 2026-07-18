@@ -8,6 +8,7 @@ import {LinkToken} from "@chainlink/local/src/shared/LinkToken.sol";
 import {
     SafeERC20
 } from "@chainlink/contracts/src/v0.8/vendor/openzeppelin-solidity/v5.0.2/contracts/token/ERC20/utils/SafeERC20.sol";
+import {EtherdocGovernance} from "../src/EtherdocGovernance.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 import {ApprovalRestrictedToken} from "./mocks/ApprovalRestrictedToken.sol";
@@ -90,7 +91,7 @@ contract EtherdocSenderTest is Test {
     function setUp() public {
         s_router = new MockRouter();
         s_link = new LinkToken();
-        s_sender = new EtherdocSender(address(s_router), address(s_link));
+        s_sender = _deploySender(address(s_link));
 
         assertTrue(s_link.transfer(address(s_sender), 100 ether));
         s_sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
@@ -173,6 +174,112 @@ contract EtherdocSenderTest is Test {
         assertEq(s_router.lastGasLimit(DESTINATION_B), GAS_LIMIT_B);
         assertTrue(s_router.lastOutOfOrderPolicy(DESTINATION_A));
         assertTrue(s_router.lastOutOfOrderPolicy(DESTINATION_B));
+    }
+
+    function test_onlyOperatorCanDispatch() external {
+        address operator = makeAddr("operator");
+        uint256 fee = s_router.FEE();
+        s_sender.setOperator(operator, true);
+        s_sender.setOperator(address(this), false);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EtherdocGovernance.UnauthorizedRole.selector, s_sender.OPERATOR_ROLE(), address(this)
+            )
+        );
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A, fee);
+
+        vm.prank(operator);
+        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, fee);
+        assertNotEq(messageId, bytes32(0));
+    }
+
+    function test_pauserStopsRegistrationButGovernanceControlsRecovery() external {
+        address pauser = makeAddr("pauser");
+        s_sender.setPauser(pauser, true);
+
+        vm.prank(pauser);
+        vm.expectEmit(true, false, false, true);
+        emit EtherdocSender.RegistrationPaused(pauser);
+        s_sender.pauseRegistration();
+        assertTrue(s_sender.registrationPaused());
+
+        vm.expectRevert(EtherdocSender.RegistrationIsPaused.selector);
+        s_sender.registerDocument("ipfs://paused-registration");
+
+        vm.expectRevert(EtherdocSender.RegistrationIsPaused.selector);
+        s_sender.supersedeDocument(s_documentId, "ipfs://paused-supersession", bytes32(0));
+
+        s_sender.revokeDocument(s_documentId);
+        assertFalse(s_sender.isDocumentActive(s_documentId));
+
+        vm.prank(pauser);
+        vm.expectRevert(bytes("Only callable by owner"));
+        s_sender.unpauseRegistration();
+
+        vm.expectEmit(true, false, false, true);
+        emit EtherdocSender.RegistrationUnpaused(address(this));
+        s_sender.unpauseRegistration();
+        assertFalse(s_sender.registrationPaused());
+        assertNotEq(s_sender.registerDocument("ipfs://registration-restored"), bytes32(0));
+    }
+
+    function test_pauserStopsDispatchButGovernanceControlsRecovery() external {
+        address pauser = makeAddr("pauser");
+        address operator = makeAddr("operator");
+        uint256 fee = s_router.FEE();
+        s_sender.setPauser(pauser, true);
+        s_sender.setOperator(operator, true);
+
+        vm.prank(pauser);
+        vm.expectEmit(true, false, false, true);
+        emit EtherdocSender.DispatchPaused(pauser);
+        s_sender.pauseDispatch();
+        assertTrue(s_sender.dispatchPaused());
+
+        vm.prank(operator);
+        vm.expectRevert(EtherdocSender.DispatchIsPaused.selector);
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A, fee);
+
+        vm.prank(pauser);
+        vm.expectRevert(bytes("Only callable by owner"));
+        s_sender.unpauseDispatch();
+
+        s_sender.unpauseDispatch();
+        assertFalse(s_sender.dispatchPaused());
+
+        vm.prank(operator);
+        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, fee);
+        assertNotEq(messageId, bytes32(0));
+    }
+
+    function test_governanceAndOperationalRolesAreExplicitAndOwnershipRemainsTwoStep() external {
+        address newGovernance = makeAddr("new-governance");
+        address newOperator = makeAddr("new-operator");
+
+        assertEq(s_sender.owner(), address(this));
+        assertTrue(s_sender.hasRole(s_sender.OPERATOR_ROLE(), address(this)));
+        assertTrue(s_sender.hasRole(s_sender.PAUSER_ROLE(), address(this)));
+
+        s_sender.transferOwnership(newGovernance);
+        vm.prank(newGovernance);
+        s_sender.acceptOwnership();
+        assertEq(s_sender.owner(), newGovernance);
+
+        vm.expectRevert(bytes("Only callable by owner"));
+        s_sender.setOperator(newOperator, true);
+
+        vm.prank(newGovernance);
+        s_sender.setOperator(newOperator, true);
+        assertTrue(s_sender.hasRole(s_sender.OPERATOR_ROLE(), newOperator));
+    }
+
+    function test_governanceRejectsZeroRoleAccounts() external {
+        vm.expectRevert(EtherdocGovernance.InvalidRoleAccount.selector);
+        s_sender.setOperator(address(0), true);
+
+        vm.expectRevert(EtherdocGovernance.InvalidRoleAccount.selector);
+        s_sender.setPauser(address(0), true);
     }
 
     function test_rejectsDuplicateLaneButAllowsAnotherLane() external {
@@ -284,7 +391,7 @@ contract EtherdocSenderTest is Test {
 
     function test_dispatchRejectsInsufficientFeeBalance() external {
         uint256 fee = s_router.FEE();
-        EtherdocSender unfundedSender = new EtherdocSender(address(s_router), address(s_link));
+        EtherdocSender unfundedSender = _deploySender(address(s_link));
         unfundedSender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
         bytes32 documentId = unfundedSender.registerDocument("ipfs://unfunded");
 
@@ -294,7 +401,7 @@ contract EtherdocSenderTest is Test {
 
     function test_forceApproveSupportsTokenRequiringZeroAllowance() external {
         ApprovalRestrictedToken token = new ApprovalRestrictedToken();
-        EtherdocSender sender = new EtherdocSender(address(s_router), address(token));
+        EtherdocSender sender = _deploySender(address(token));
         token.mint(address(sender), 10 ether);
         sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
         sender.configureRemote(DESTINATION_B, RECEIVER_B, GAS_LIMIT_B, true);
@@ -309,7 +416,7 @@ contract EtherdocSenderTest is Test {
     function test_dispatchRevertsWhenApprovalFails() external {
         uint256 fee = s_router.FEE();
         ApprovalRestrictedToken token = new ApprovalRestrictedToken();
-        EtherdocSender sender = new EtherdocSender(address(s_router), address(token));
+        EtherdocSender sender = _deploySender(address(token));
         token.mint(address(sender), 10 ether);
         token.setApprovalsDisabled(true);
         sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
@@ -356,5 +463,10 @@ contract EtherdocSenderTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(token)));
         s_sender.withdrawToken(address(token), makeAddr("treasury"), 1 ether);
+    }
+
+    function _deploySender(address _feeToken) private returns (EtherdocSender) {
+        return
+            new EtherdocSender(address(s_router), _feeToken, address(this), address(this), address(this), address(this));
     }
 }

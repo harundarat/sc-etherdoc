@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import {OwnerIsCreator} from "@chainlink/contracts/src/v0.8/shared/access/OwnerIsCreator.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/contracts/applications/CCIPReceiver.sol";
+import {EtherdocGovernance} from "./EtherdocGovernance.sol";
 import {EtherdocTypes} from "./EtherdocTypes.sol";
 
-contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
+contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
     uint16 public constant PAYLOAD_SCHEMA_VERSION = EtherdocTypes.SCHEMA_VERSION;
     uint256 public constant MAX_DOCUMENT_CID_LENGTH = EtherdocTypes.MAX_DOCUMENT_CID_LENGTH;
     uint256 public constant MAX_PAYLOAD_LENGTH = EtherdocTypes.MAX_PAYLOAD_LENGTH;
@@ -42,6 +42,8 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
     error InvalidDocumentTransition(bytes32 documentId, uint64 currentVersion, uint64 incomingVersion);
     error ConflictingDocumentProvenance(bytes32 documentId);
     error ConflictingDocumentState(bytes32 documentId, uint64 version);
+    error ReceiveIsPaused();
+    error ReceiveNotPaused();
 
     event MessageReceived(
         bytes32 indexed messageId,
@@ -62,13 +64,21 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
         bool duplicateMessage
     );
     event TrustedRemoteConfigured(uint64 indexed sourceChainSelector, address indexed sender, bool trusted);
+    event ReceivePaused(address indexed account);
+    event ReceiveUnpaused(address indexed account);
 
     mapping(bytes32 documentId => ReceiptRecord receipt) private s_receipts;
     mapping(bytes32 messageId => bool processed) private s_processedMessages;
     mapping(bytes32 messageId => bytes32 documentId) private s_messageDocuments;
     mapping(uint64 sourceChainSelector => mapping(address sender => bool trusted)) private s_trustedRemotes;
+    bool private s_receivePaused;
 
-    constructor(address _router) CCIPReceiver(_router) {}
+    constructor(address _router, address _governance, address _initialPauser)
+        CCIPReceiver(_router)
+        EtherdocGovernance(_governance)
+    {
+        _setRole(PAUSER_ROLE, _initialPauser, true);
+    }
 
     function configureTrustedRemote(uint64 _sourceChainSelector, address _sender, bool _trusted) external onlyOwner {
         if (_sourceChainSelector == 0) {
@@ -80,6 +90,26 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
 
         s_trustedRemotes[_sourceChainSelector][_sender] = _trusted;
         emit TrustedRemoteConfigured(_sourceChainSelector, _sender, _trusted);
+    }
+
+    function setPauser(address _pauser, bool _authorized) external onlyOwner {
+        _setRole(PAUSER_ROLE, _pauser, _authorized);
+    }
+
+    function pauseReceive() external onlyRole(PAUSER_ROLE) {
+        if (s_receivePaused) {
+            revert ReceiveIsPaused();
+        }
+        s_receivePaused = true;
+        emit ReceivePaused(msg.sender);
+    }
+
+    function unpauseReceive() external onlyOwner {
+        if (!s_receivePaused) {
+            revert ReceiveNotPaused();
+        }
+        s_receivePaused = false;
+        emit ReceiveUnpaused(msg.sender);
     }
 
     /**
@@ -100,6 +130,9 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
      * - UntrustedRemote if the source chain and sender pair is not trusted
      */
     function _ccipReceive(Client.Any2EVMMessage memory message) internal virtual override {
+        if (s_receivePaused) {
+            revert ReceiveIsPaused();
+        }
         if (message.messageId == bytes32(0)) {
             revert InvalidMessageId();
         }
@@ -188,6 +221,10 @@ contract EtherdocReceiver is CCIPReceiver, OwnerIsCreator {
 
     function isMessageProcessed(bytes32 _messageId) external view returns (bool) {
         return s_processedMessages[_messageId];
+    }
+
+    function receivePaused() external view returns (bool) {
+        return s_receivePaused;
     }
 
     function getMessageDocument(bytes32 _messageId) external view returns (bytes32) {
