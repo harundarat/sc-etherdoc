@@ -58,6 +58,8 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
 
     error NotEnoughBalance(uint256 currentBalance, uint256 calculatedFees);
     error InvalidDocumentCID();
+    error DocumentCIDTooLong(uint256 actualLength, uint256 maximumLength);
+    error PayloadTooLarge(uint256 actualLength, uint256 maximumLength);
     error InvalidIssuerAddress();
     error IssuerNotAuthorized(address issuer);
     error CallerNotDocumentIssuer(address caller, address issuer);
@@ -258,24 +260,10 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
             revert DocumentAlreadyDispatched(_documentId, _destinationChainSelector, document.version);
         }
 
-        Client.EVM2AnyMessage memory evm2AnyMessage = Client.EVM2AnyMessage({
-            receiver: abi.encode(remote.receiver),
-            data: abi.encode(document),
-            tokenAmounts: new Client.EVMTokenAmount[](0),
-            extraArgs: Client._argsToBytes(
-                Client.GenericExtraArgsV2({gasLimit: remote.gasLimit, allowOutOfOrderExecution: true})
-            ),
-            feeToken: address(i_linkToken)
-        });
-
-        uint256 fees = i_router.getFee(_destinationChainSelector, evm2AnyMessage);
-        uint256 linkBalance = i_linkToken.balanceOf(address(this));
-        if (fees > linkBalance) {
-            revert NotEnoughBalance(linkBalance, fees);
-        }
-
-        i_linkToken.approve(address(i_router), fees);
-        messageId = i_router.ccipSend(_destinationChainSelector, evm2AnyMessage);
+        EtherdocTypes.DocumentRecord memory documentSnapshot = document;
+        EtherdocTypes.Operation operation = EtherdocTypes.operationFor(documentSnapshot.status);
+        uint256 fees;
+        (messageId, fees) = _sendMessage(_destinationChainSelector, remote, documentSnapshot, operation);
 
         uint64 sentAt = uint64(block.timestamp);
         s_dispatches[_documentId][_destinationChainSelector][document.version] = DispatchRecord({
@@ -300,6 +288,44 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
             address(i_linkToken),
             fees
         );
+    }
+
+    function _sendMessage(
+        uint64 _destinationChainSelector,
+        RemoteConfig memory _remote,
+        EtherdocTypes.DocumentRecord memory _document,
+        EtherdocTypes.Operation _operation
+    ) private returns (bytes32 messageId, uint256 fees) {
+        EtherdocTypes.DocumentPayload memory payload = EtherdocTypes.DocumentPayload({
+            schemaVersion: EtherdocTypes.SCHEMA_VERSION,
+            operation: _operation,
+            documentId: _document.documentId,
+            documentVersion: _document.version,
+            document: _document
+        });
+        bytes memory encodedPayload = abi.encode(payload);
+        if (encodedPayload.length > EtherdocTypes.MAX_PAYLOAD_LENGTH) {
+            revert PayloadTooLarge(encodedPayload.length, EtherdocTypes.MAX_PAYLOAD_LENGTH);
+        }
+
+        Client.EVM2AnyMessage memory evm2AnyMessage = Client.EVM2AnyMessage({
+            receiver: abi.encode(_remote.receiver),
+            data: encodedPayload,
+            tokenAmounts: new Client.EVMTokenAmount[](0),
+            extraArgs: Client._argsToBytes(
+                Client.GenericExtraArgsV2({gasLimit: _remote.gasLimit, allowOutOfOrderExecution: true})
+            ),
+            feeToken: address(i_linkToken)
+        });
+
+        fees = i_router.getFee(_destinationChainSelector, evm2AnyMessage);
+        uint256 linkBalance = i_linkToken.balanceOf(address(this));
+        if (fees > linkBalance) {
+            revert NotEnoughBalance(linkBalance, fees);
+        }
+
+        i_linkToken.approve(address(i_router), fees);
+        messageId = i_router.ccipSend(_destinationChainSelector, evm2AnyMessage);
     }
 
     /**
@@ -428,9 +454,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         if (!s_authorizedIssuers[_issuer]) {
             revert IssuerNotAuthorized(_issuer);
         }
-        if (bytes(_documentCID).length == 0) {
-            revert InvalidDocumentCID();
-        }
+        _validateDocumentCID(_documentCID);
 
         bytes32 commitment = EtherdocTypes.contentCommitment(_documentCID);
         documentId = EtherdocTypes.documentId(_issuer, commitment);
@@ -538,6 +562,16 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
             revert InvalidIssuerSignature(_issuer, recoveredSigner);
         }
         s_issuerNonces[_issuer]++;
+    }
+
+    function _validateDocumentCID(string calldata _documentCID) private pure {
+        uint256 cidLength = bytes(_documentCID).length;
+        if (cidLength == 0) {
+            revert InvalidDocumentCID();
+        }
+        if (cidLength > EtherdocTypes.MAX_DOCUMENT_CID_LENGTH) {
+            revert DocumentCIDTooLong(cidLength, EtherdocTypes.MAX_DOCUMENT_CID_LENGTH);
+        }
     }
 
     function _supersedeStructHash(SupersedeAuthorization memory _authorization) private pure returns (bytes32) {
