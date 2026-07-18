@@ -68,6 +68,7 @@ contract EtherdocSenderTest is Test {
     uint64 private constant DESTINATION_B = 22;
     uint256 private constant GAS_LIMIT_A = 350_000;
     uint256 private constant GAS_LIMIT_B = 600_000;
+    uint256 private constant MAX_DOCUMENT_CID_LENGTH = 256;
     address private constant RECEIVER_A = address(0xA11CE);
     address private constant RECEIVER_B = address(0xB0B);
     string private constant DOCUMENT_CID = "ipfs://bafy-document";
@@ -105,6 +106,32 @@ contract EtherdocSenderTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.DocumentAlreadyRegistered.selector, s_documentId));
         s_sender.registerDocument(DOCUMENT_CID);
+    }
+
+    function test_rejectsEmptyAndOversizedCID() external {
+        vm.expectRevert(EtherdocSender.InvalidDocumentCID.selector);
+        s_sender.registerDocument("");
+
+        uint256 maximumLength = MAX_DOCUMENT_CID_LENGTH;
+        string memory oversizedCID = string(new bytes(maximumLength + 1));
+        vm.expectRevert(
+            abi.encodeWithSelector(EtherdocSender.DocumentCIDTooLong.selector, maximumLength + 1, maximumLength)
+        );
+        s_sender.registerDocument(oversizedCID);
+    }
+
+    function test_acceptsMaximumCIDWithinPayloadLimit() external {
+        uint256 maximumLength = MAX_DOCUMENT_CID_LENGTH;
+        bytes memory cidBytes = new bytes(maximumLength);
+        for (uint256 i; i < maximumLength; i++) {
+            cidBytes[i] = "a";
+        }
+
+        bytes32 documentId = s_sender.registerDocument(string(cidBytes));
+        bytes32 messageId = s_sender.dispatchDocument(documentId, DESTINATION_A);
+
+        assertNotEq(messageId, bytes32(0));
+        assertEq(s_sender.getDispatch(documentId, DESTINATION_A).messageId, messageId);
     }
 
     function test_dispatchesOneDocumentToTwoDestinationChains() external {
