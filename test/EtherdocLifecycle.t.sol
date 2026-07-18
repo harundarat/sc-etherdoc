@@ -2,6 +2,7 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {IAny2EVMMessageReceiver} from "@chainlink/contracts-ccip/contracts/interfaces/IAny2EVMMessageReceiver.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
 import {LinkToken} from "@chainlink/local/src/shared/LinkToken.sol";
@@ -10,6 +11,12 @@ import {EtherdocReceiver} from "../src/EtherdocReceiver.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 
 contract DeferredRouter is IRouterClient {
+    enum ExecutionState {
+        UNTOUCHED,
+        SUCCESS,
+        FAILURE
+    }
+
     struct QueuedMessage {
         address receiver;
         address sender;
@@ -22,6 +29,10 @@ contract DeferredRouter is IRouterClient {
 
     uint256 private s_nonce;
     mapping(bytes32 messageId => QueuedMessage message) private s_messages;
+    mapping(bytes32 messageId => ExecutionState state) private s_executionStates;
+    mapping(bytes32 messageId => bytes returnData) private s_executionReturnData;
+
+    event ExecutionAttempted(bytes32 indexed messageId, ExecutionState state, bytes returnData);
 
     function isChainSupported(uint64) external pure returns (bool supported) {
         return true;
@@ -51,6 +62,26 @@ contract DeferredRouter is IRouterClient {
         _deliverAs(_messageId, _sourceChainSelector, _sender);
     }
 
+    function execute(bytes32 _messageId) external returns (bool success, bytes memory returnData) {
+        QueuedMessage storage queuedMessage = s_messages[_messageId];
+        require(queuedMessage.exists, "message not queued");
+
+        Client.Any2EVMMessage memory message = Client.Any2EVMMessage({
+            messageId: _messageId,
+            sourceChainSelector: SOURCE_CHAIN_SELECTOR,
+            sender: abi.encode(queuedMessage.sender),
+            data: queuedMessage.data,
+            destTokenAmounts: new Client.EVMTokenAmount[](0)
+        });
+
+        (success, returnData) =
+            queuedMessage.receiver.call(abi.encodeCall(IAny2EVMMessageReceiver.ccipReceive, (message)));
+        ExecutionState state = success ? ExecutionState.SUCCESS : ExecutionState.FAILURE;
+        s_executionStates[_messageId] = state;
+        s_executionReturnData[_messageId] = returnData;
+        emit ExecutionAttempted(_messageId, state, returnData);
+    }
+
     function deliverRaw(
         address _receiver,
         bytes32 _messageId,
@@ -71,6 +102,14 @@ contract DeferredRouter is IRouterClient {
 
     function getData(bytes32 _messageId) external view returns (bytes memory) {
         return s_messages[_messageId].data;
+    }
+
+    function getExecutionState(bytes32 _messageId) external view returns (ExecutionState) {
+        return s_executionStates[_messageId];
+    }
+
+    function getExecutionReturnData(bytes32 _messageId) external view returns (bytes memory) {
+        return s_executionReturnData[_messageId];
     }
 
     function _deliverAs(bytes32 _messageId, uint64 _sourceChainSelector, address _sender) private {
@@ -141,25 +180,36 @@ contract EtherdocLifecycleTest is Test {
 
     function test_failedDestinationExecutionCanRetrySameMessage() external {
         bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                EtherdocReceiver.UntrustedRemote.selector, s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender)
-            )
+        bytes memory authenticationError = abi.encodeWithSelector(
+            EtherdocReceiver.UntrustedRemote.selector, s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender)
         );
-        s_router.deliver(messageId);
+
+        vm.expectEmit(true, false, false, true);
+        emit DeferredRouter.ExecutionAttempted(messageId, DeferredRouter.ExecutionState.FAILURE, authenticationError);
+        (bool firstAttemptSucceeded, bytes memory returnData) = s_router.execute(messageId);
 
         EtherdocSender.DispatchRecord memory dispatch = s_sender.getDispatch(s_documentId, DESTINATION_A);
         EtherdocReceiver.ReceiptRecord memory failedReceipt = s_receiverA.getReceipt(s_documentId);
+        assertFalse(firstAttemptSucceeded);
+        assertEq(returnData, authenticationError);
+        assertEq(uint8(s_router.getExecutionState(messageId)), uint8(DeferredRouter.ExecutionState.FAILURE));
+        assertEq(s_router.getExecutionReturnData(messageId), authenticationError);
         assertEq(dispatch.messageId, messageId);
         assertEq(uint8(dispatch.status), uint8(EtherdocSender.DispatchStatus.DISPATCHED));
         assertEq(uint8(failedReceipt.status), uint8(EtherdocReceiver.ReceiptStatus.NOT_RECEIVED));
+        assertFalse(s_receiverA.isMessageProcessed(messageId));
 
         s_receiverA.configureTrustedRemote(s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender), true);
         vm.warp(block.timestamp + 15);
-        s_router.deliver(messageId);
+        vm.expectEmit(true, false, false, true);
+        emit DeferredRouter.ExecutionAttempted(messageId, DeferredRouter.ExecutionState.SUCCESS, "");
+        (bool retrySucceeded, bytes memory retryReturnData) = s_router.execute(messageId);
 
         EtherdocReceiver.ReceiptRecord memory retriedReceipt = s_receiverA.getReceipt(s_documentId);
+        assertTrue(retrySucceeded);
+        assertEq(retryReturnData, "");
+        assertEq(uint8(s_router.getExecutionState(messageId)), uint8(DeferredRouter.ExecutionState.SUCCESS));
+        assertEq(s_router.getExecutionReturnData(messageId), "");
         assertEq(retriedReceipt.messageId, messageId);
         assertEq(retriedReceipt.document.documentCID, DOCUMENT_CID);
         assertEq(retriedReceipt.document.issuer, address(this));
