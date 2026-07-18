@@ -200,12 +200,24 @@ diaktifkan, kombinasi silang semuanya ikut lolos walaupun hanya pasangan tertent
 
 **Selesai jika:** test matriks A/X dan B/Y membuktikan A/Y serta B/X ditolak.
 
-### [ ] P1-02 Bind destination chain ke receiver yang dikonfigurasi
+### [x] P1-02 Bind destination chain ke receiver yang dikonfigurasi
 
-**Bukti:** `src/EtherdocSender.sol:55-64`.
+**Bukti terkini:** `src/EtherdocSender.sol:42-46`, `119`, `241-303`, dan `305-361`;
+`script/ConfigureEtherdocSender.s.sol:13-24`; serta `test/EtherdocSender.t.sol:110-140` dan
+`177-227`.
 
-Destination chain di-allowlist, tetapi receiver diberikan bebas pada setiap panggilan. Salah alamat,
-EOA, atau receiver dari environment lain dapat menerima message dan biaya tetap terpakai.
+Bukti awal sudah stale karena refactor P0 sebelumnya telah menghapus parameter receiver dari
+`dispatchDocument`, tetapi gas limit masih berupa konstanta global dan binding tersebut belum diuji
+secara langsung. Implementasi sekarang menyimpan `RemoteConfig` atomic berisi receiver, gas limit,
+dan status allowlist untuk setiap selector. Dispatch hanya membaca config tersebut, menyimpan
+receiver/gas limit yang dipakai ke record, dan memancarkannya pada event.
+
+Rotasi dilakukan eksplisit melalui fungsi owner-only `configureRemote` dan event
+`RemoteConfigUpdated`; zero selector, zero receiver, serta zero gas limit ditolak. Script konfigurasi
+memvalidasi bytecode receiver melalui RPC destination sebelum mengirim perubahan config. Validasi ini
+hanya snapshot saat konfigurasi karena bytecode destination tetap dapat berubah sesudahnya. Timelock
+tidak ditambahkan ke single-owner contract saat ini; kebutuhan governance production tetap dicakup
+P1-06.
 
 **TODO:**
 
