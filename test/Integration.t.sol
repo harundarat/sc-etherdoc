@@ -35,7 +35,8 @@ contract Integration is Test {
         string memory documentCID = "hello";
 
         bytes32 documentId = etherdocSender.registerDocument(documentCID);
-        bytes32 messageId = etherdocSender.dispatchDocument(documentId, destinationChainSelector);
+        uint256 quotedFee = etherdocSender.quoteFee(documentId, destinationChainSelector);
+        bytes32 messageId = etherdocSender.dispatchDocument(documentId, destinationChainSelector, quotedFee);
 
         bool isRegisteredInSourceChain = etherdocSender.isDocumentRegistered(documentId);
         bool isReceivedInDestinationChain = etherdocReceiver.isDocumentReceived(documentId);

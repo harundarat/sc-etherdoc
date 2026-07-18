@@ -4,7 +4,12 @@ pragma solidity 0.8.24;
 import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
 import {OwnerIsCreator} from "@chainlink/contracts/src/v0.8/shared/access/OwnerIsCreator.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
-import {LinkTokenInterface} from "@chainlink/contracts/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
+import {
+    IERC20
+} from "@chainlink/contracts/src/v0.8/vendor/openzeppelin-solidity/v5.0.2/contracts/token/ERC20/IERC20.sol";
+import {
+    SafeERC20
+} from "@chainlink/contracts/src/v0.8/vendor/openzeppelin-solidity/v5.0.2/contracts/token/ERC20/utils/SafeERC20.sol";
 import {
     EIP712
 } from "@chainlink/contracts/src/v0.8/vendor/openzeppelin-solidity/v5.0.2/contracts/utils/cryptography/EIP712.sol";
@@ -14,6 +19,8 @@ import {
 import {EtherdocTypes} from "./EtherdocTypes.sol";
 
 contract EtherdocSender is OwnerIsCreator, EIP712 {
+    using SafeERC20 for IERC20;
+
     bytes32 public constant REGISTER_DOCUMENT_TYPEHASH = keccak256(
         "RegisterDocument(address issuer,bytes32 documentId,bytes32 contentCommitment,bytes32 metadataCommitment,uint256 nonce,uint256 deadline)"
     );
@@ -73,6 +80,9 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
     error InvalidReceiverAddress();
     error InvalidGasLimit(uint256 gasLimit);
     error DestinationChainNotAllowlisted(uint64 destinationChainSelector);
+    error FeeExceedsMaximum(uint256 calculatedFees, uint256 maximumFee);
+    error InvalidTokenAddress();
+    error InvalidWithdrawalRecipient();
 
     event IssuerAuthorizationUpdated(address indexed issuer, bool authorized);
     event DocumentRegistered(
@@ -96,6 +106,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
     event RemoteConfigUpdated(
         uint64 indexed destinationChainSelector, address indexed receiver, uint256 gasLimit, bool allowlisted
     );
+    event TokenWithdrawn(address indexed token, address indexed recipient, uint256 amount);
     event MessageSent(
         bytes32 indexed messageId,
         bytes32 indexed documentId,
@@ -110,7 +121,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
     );
 
     IRouterClient private immutable i_router;
-    LinkTokenInterface private immutable i_linkToken;
+    IERC20 private immutable i_linkToken;
     mapping(bytes32 documentId => EtherdocTypes.DocumentRecord document) private s_documents;
     mapping(
         bytes32 documentId
@@ -124,7 +135,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
 
     constructor(address _router, address _link) EIP712("Etherdoc", "1") {
         i_router = IRouterClient(_router);
-        i_linkToken = LinkTokenInterface(_link);
+        i_linkToken = IERC20(_link);
         s_authorizedIssuers[msg.sender] = true;
         emit IssuerAuthorizationUpdated(msg.sender, true);
     }
@@ -238,9 +249,10 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
      *      retried. A successful lane cannot be dispatched again through this function.
      * @param _documentId The canonical document identifier returned by registerDocument.
      * @param _destinationChainSelector The CCIP selector of the destination lane.
+     * @param _maximumFee The largest LINK fee the caller permits for this transaction.
      * @return messageId The unique identifier of the accepted CCIP message.
      */
-    function dispatchDocument(bytes32 _documentId, uint64 _destinationChainSelector)
+    function dispatchDocument(bytes32 _documentId, uint64 _destinationChainSelector, uint256 _maximumFee)
         external
         onlyOwner
         returns (bytes32 messageId)
@@ -263,7 +275,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         EtherdocTypes.DocumentRecord memory documentSnapshot = document;
         EtherdocTypes.Operation operation = EtherdocTypes.operationFor(documentSnapshot.status);
         uint256 fees;
-        (messageId, fees) = _sendMessage(_destinationChainSelector, remote, documentSnapshot, operation);
+        (messageId, fees) = _sendMessage(_destinationChainSelector, remote, documentSnapshot, operation, _maximumFee);
 
         uint64 sentAt = uint64(block.timestamp);
         s_dispatches[_documentId][_destinationChainSelector][document.version] = DispatchRecord({
@@ -294,8 +306,29 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         uint64 _destinationChainSelector,
         RemoteConfig memory _remote,
         EtherdocTypes.DocumentRecord memory _document,
-        EtherdocTypes.Operation _operation
+        EtherdocTypes.Operation _operation,
+        uint256 _maximumFee
     ) private returns (bytes32 messageId, uint256 fees) {
+        Client.EVM2AnyMessage memory evm2AnyMessage = _buildMessage(_remote, _document, _operation);
+
+        fees = i_router.getFee(_destinationChainSelector, evm2AnyMessage);
+        if (fees > _maximumFee) {
+            revert FeeExceedsMaximum(fees, _maximumFee);
+        }
+        uint256 linkBalance = i_linkToken.balanceOf(address(this));
+        if (fees > linkBalance) {
+            revert NotEnoughBalance(linkBalance, fees);
+        }
+
+        i_linkToken.forceApprove(address(i_router), fees);
+        messageId = i_router.ccipSend(_destinationChainSelector, evm2AnyMessage);
+    }
+
+    function _buildMessage(
+        RemoteConfig memory _remote,
+        EtherdocTypes.DocumentRecord memory _document,
+        EtherdocTypes.Operation _operation
+    ) private view returns (Client.EVM2AnyMessage memory evm2AnyMessage) {
         EtherdocTypes.DocumentPayload memory payload = EtherdocTypes.DocumentPayload({
             schemaVersion: EtherdocTypes.SCHEMA_VERSION,
             operation: _operation,
@@ -308,7 +341,7 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
             revert PayloadTooLarge(encodedPayload.length, EtherdocTypes.MAX_PAYLOAD_LENGTH);
         }
 
-        Client.EVM2AnyMessage memory evm2AnyMessage = Client.EVM2AnyMessage({
+        evm2AnyMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(_remote.receiver),
             data: encodedPayload,
             tokenAmounts: new Client.EVMTokenAmount[](0),
@@ -317,15 +350,6 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
             ),
             feeToken: address(i_linkToken)
         });
-
-        fees = i_router.getFee(_destinationChainSelector, evm2AnyMessage);
-        uint256 linkBalance = i_linkToken.balanceOf(address(this));
-        if (fees > linkBalance) {
-            revert NotEnoughBalance(linkBalance, fees);
-        }
-
-        i_linkToken.approve(address(i_router), fees);
-        messageId = i_router.ccipSend(_destinationChainSelector, evm2AnyMessage);
     }
 
     /**
@@ -359,6 +383,42 @@ contract EtherdocSender is OwnerIsCreator, EIP712 {
         }
         s_authorizedIssuers[_issuer] = _authorized;
         emit IssuerAuthorizationUpdated(_issuer, _authorized);
+    }
+
+    /**
+     * @notice Quotes the current LINK fee for a document and configured destination.
+     * @dev The Router can return a different fee when dispatchDocument is mined. Callers must set
+     *      their acceptable upper bound through dispatchDocument's maximumFee argument.
+     */
+    function quoteFee(bytes32 _documentId, uint64 _destinationChainSelector) external view returns (uint256 fee) {
+        RemoteConfig memory remote = s_remotes[_destinationChainSelector];
+        if (!remote.allowlisted) {
+            revert DestinationChainNotAllowlisted(_destinationChainSelector);
+        }
+
+        EtherdocTypes.DocumentRecord memory document = s_documents[_documentId];
+        if (document.status == EtherdocTypes.DocumentStatus.UNKNOWN) {
+            revert DocumentNotRegistered(_documentId);
+        }
+
+        Client.EVM2AnyMessage memory message =
+            _buildMessage(remote, document, EtherdocTypes.operationFor(document.status));
+        return i_router.getFee(_destinationChainSelector, message);
+    }
+
+    /**
+     * @notice Rescues ERC-20 funds from this contract to an owner-selected recipient.
+     */
+    function withdrawToken(address _token, address _recipient, uint256 _amount) external onlyOwner {
+        if (_token == address(0)) {
+            revert InvalidTokenAddress();
+        }
+        if (_recipient == address(0)) {
+            revert InvalidWithdrawalRecipient();
+        }
+
+        IERC20(_token).safeTransfer(_recipient, _amount);
+        emit TokenWithdrawn(_token, _recipient, _amount);
     }
 
     function getDocument(bytes32 _documentId) external view returns (EtherdocTypes.DocumentRecord memory) {

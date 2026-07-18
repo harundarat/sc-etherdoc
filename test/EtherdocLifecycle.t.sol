@@ -156,7 +156,7 @@ contract EtherdocLifecycleTest is Test {
     }
 
     function test_pendingDispatchIsNotReportedAsReceived() external {
-        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
 
         EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(s_documentId);
         EtherdocSender.DispatchRecord memory dispatch = s_sender.getDispatch(s_documentId, DESTINATION_A);
@@ -179,7 +179,7 @@ contract EtherdocLifecycleTest is Test {
     }
 
     function test_failedDestinationExecutionCanRetrySameMessage() external {
-        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
         bytes memory authenticationError = abi.encodeWithSelector(
             EtherdocReceiver.UntrustedRemote.selector, s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender)
         );
@@ -228,8 +228,8 @@ contract EtherdocLifecycleTest is Test {
         _allowReceiver(s_receiverA);
         _allowReceiver(s_receiverB);
 
-        bytes32 messageIdA = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
-        bytes32 messageIdB = s_sender.dispatchDocument(s_documentId, DESTINATION_B);
+        bytes32 messageIdA = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
+        bytes32 messageIdB = s_sender.dispatchDocument(s_documentId, DESTINATION_B, s_router.FEE());
 
         s_router.deliver(messageIdA);
         assertTrue(s_receiverA.isDocumentReceived(s_documentId));
@@ -248,7 +248,7 @@ contract EtherdocLifecycleTest is Test {
     function test_revocationCanBeDispatchedWithoutDeletingRegistrationHistory() external {
         _allowReceiver(s_receiverA);
 
-        bytes32 activeMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        bytes32 activeMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
         s_router.deliver(activeMessageId);
         assertTrue(s_receiverA.isDocumentActive(s_documentId));
 
@@ -258,7 +258,7 @@ contract EtherdocLifecycleTest is Test {
         assertEq(sourceDocument.version, 2);
         assertEq(sourceDocument.documentCID, DOCUMENT_CID);
 
-        bytes32 revokedMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        bytes32 revokedMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
         s_router.deliver(revokedMessageId);
 
         EtherdocReceiver.ReceiptRecord memory destinationReceipt = s_receiverA.getReceipt(s_documentId);
@@ -281,7 +281,7 @@ contract EtherdocLifecycleTest is Test {
 
     function test_duplicateMessageIsIgnoredAndRemainsObservable() external {
         _allowReceiver(s_receiverA);
-        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
         s_router.deliver(messageId);
 
         EtherdocReceiver.ReceiptRecord memory firstReceipt = s_receiverA.getReceipt(s_documentId);
@@ -300,9 +300,9 @@ contract EtherdocLifecycleTest is Test {
 
     function test_outOfOrderOlderMessageCannotReactivateRevokedDocument() external {
         _allowReceiver(s_receiverA);
-        bytes32 activeMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        bytes32 activeMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
         s_sender.revokeDocument(s_documentId);
-        bytes32 revokedMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        bytes32 revokedMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
 
         s_router.deliver(revokedMessageId);
         assertFalse(s_receiverA.isDocumentActive(s_documentId));
@@ -323,8 +323,8 @@ contract EtherdocLifecycleTest is Test {
         bytes32 replacementId =
             s_sender.supersedeDocument(s_documentId, "ipfs://bafy-lifecycle-replacement", bytes32(uint256(123)));
 
-        bytes32 supersedeMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
-        bytes32 replacementMessageId = s_sender.dispatchDocument(replacementId, DESTINATION_A);
+        bytes32 supersedeMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
+        bytes32 replacementMessageId = s_sender.dispatchDocument(replacementId, DESTINATION_A, s_router.FEE());
         s_router.deliver(supersedeMessageId);
         s_router.deliver(replacementMessageId);
 
@@ -491,7 +491,7 @@ contract EtherdocLifecycleTest is Test {
 
     function _queueDocument(string memory _documentCID) private returns (bytes32 messageId) {
         bytes32 documentId = s_sender.registerDocument(_documentCID);
-        return s_sender.dispatchDocument(documentId, DESTINATION_A);
+        return s_sender.dispatchDocument(documentId, DESTINATION_A, s_router.FEE());
     }
 
     function _deliverPayload(bytes32 _messageId, EtherdocTypes.DocumentPayload memory _payload) private {

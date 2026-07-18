@@ -5,13 +5,18 @@ import {Test} from "forge-std/Test.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
 import {LinkToken} from "@chainlink/local/src/shared/LinkToken.sol";
+import {
+    SafeERC20
+} from "@chainlink/contracts/src/v0.8/vendor/openzeppelin-solidity/v5.0.2/contracts/token/ERC20/utils/SafeERC20.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
+import {ApprovalRestrictedToken} from "./mocks/ApprovalRestrictedToken.sol";
 
 contract MockRouter is IRouterClient {
     error SimulatedLaneFailure(uint64 destinationChainSelector);
 
     uint256 public constant FEE = 1 ether;
+    uint256 private s_fee = FEE;
     uint256 private s_nonce;
     mapping(uint64 destinationChainSelector => bool shouldFail) private s_failingLanes;
     mapping(uint64 destinationChainSelector => address receiver) private s_lastReceivers;
@@ -22,12 +27,16 @@ contract MockRouter is IRouterClient {
         s_failingLanes[_destinationChainSelector] = _shouldFail;
     }
 
+    function setFee(uint256 _fee) external {
+        s_fee = _fee;
+    }
+
     function isChainSupported(uint64) external pure returns (bool supported) {
         return true;
     }
 
-    function getFee(uint64, Client.EVM2AnyMessage memory) external pure returns (uint256 fee) {
-        return FEE;
+    function getFee(uint64, Client.EVM2AnyMessage memory) external view returns (uint256 fee) {
+        return s_fee;
     }
 
     function ccipSend(uint64 _destinationChainSelector, Client.EVM2AnyMessage calldata _message)
@@ -128,15 +137,15 @@ contract EtherdocSenderTest is Test {
         }
 
         bytes32 documentId = s_sender.registerDocument(string(cidBytes));
-        bytes32 messageId = s_sender.dispatchDocument(documentId, DESTINATION_A);
+        bytes32 messageId = s_sender.dispatchDocument(documentId, DESTINATION_A, s_router.FEE());
 
         assertNotEq(messageId, bytes32(0));
         assertEq(s_sender.getDispatch(documentId, DESTINATION_A).messageId, messageId);
     }
 
     function test_dispatchesOneDocumentToTwoDestinationChains() external {
-        bytes32 messageIdA = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
-        bytes32 messageIdB = s_sender.dispatchDocument(s_documentId, DESTINATION_B);
+        bytes32 messageIdA = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
+        bytes32 messageIdB = s_sender.dispatchDocument(s_documentId, DESTINATION_B, s_router.FEE());
 
         EtherdocSender.DispatchRecord memory dispatchA = s_sender.getDispatch(s_documentId, DESTINATION_A);
         EtherdocSender.DispatchRecord memory dispatchB = s_sender.getDispatch(s_documentId, DESTINATION_B);
@@ -167,23 +176,25 @@ contract EtherdocSenderTest is Test {
     }
 
     function test_rejectsDuplicateLaneButAllowsAnotherLane() external {
-        s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        uint256 fee = s_router.FEE();
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A, fee);
 
         vm.expectRevert(
             abi.encodeWithSelector(EtherdocSender.DocumentAlreadyDispatched.selector, s_documentId, DESTINATION_A, 1)
         );
-        s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A, fee);
 
-        bytes32 messageIdB = s_sender.dispatchDocument(s_documentId, DESTINATION_B);
+        bytes32 messageIdB = s_sender.dispatchDocument(s_documentId, DESTINATION_B, fee);
         assertNotEq(messageIdB, bytes32(0));
     }
 
     function test_failedLaneDoesNotEraseSuccessfulLaneAndCanBeRetried() external {
-        bytes32 messageIdA = s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        uint256 fee = s_router.FEE();
+        bytes32 messageIdA = s_sender.dispatchDocument(s_documentId, DESTINATION_A, fee);
         s_router.setLaneFailure(DESTINATION_B, true);
 
         vm.expectRevert(abi.encodeWithSelector(MockRouter.SimulatedLaneFailure.selector, DESTINATION_B));
-        s_sender.dispatchDocument(s_documentId, DESTINATION_B);
+        s_sender.dispatchDocument(s_documentId, DESTINATION_B, fee);
 
         EtherdocSender.DispatchRecord memory dispatchA = s_sender.getDispatch(s_documentId, DESTINATION_A);
         EtherdocSender.DispatchRecord memory failedDispatch = s_sender.getDispatch(s_documentId, DESTINATION_B);
@@ -194,7 +205,7 @@ contract EtherdocSenderTest is Test {
         assertEq(uint8(failedDispatch.status), uint8(EtherdocSender.DispatchStatus.NOT_DISPATCHED));
 
         s_router.setLaneFailure(DESTINATION_B, false);
-        bytes32 retriedMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_B);
+        bytes32 retriedMessageId = s_sender.dispatchDocument(s_documentId, DESTINATION_B, fee);
 
         EtherdocSender.DispatchRecord memory retriedDispatch = s_sender.getDispatch(s_documentId, DESTINATION_B);
         assertEq(retriedDispatch.messageId, retriedMessageId);
@@ -212,7 +223,7 @@ contract EtherdocSenderTest is Test {
 
         assertFalse(success);
 
-        s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
         assertEq(s_router.lastReceiver(DESTINATION_A), RECEIVER_A);
         assertNotEq(s_router.lastReceiver(DESTINATION_A), arbitraryReceiver);
     }
@@ -230,7 +241,7 @@ contract EtherdocSenderTest is Test {
         assertEq(remote.gasLimit, rotatedGasLimit);
         assertTrue(remote.allowlisted);
 
-        s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
         assertEq(s_router.lastReceiver(DESTINATION_A), rotatedReceiver);
         assertEq(s_router.lastGasLimit(DESTINATION_A), rotatedGasLimit);
     }
@@ -247,9 +258,103 @@ contract EtherdocSenderTest is Test {
     }
 
     function test_dispatchRejectsDisabledRemote() external {
+        uint256 fee = s_router.FEE();
         s_sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, false);
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.DestinationChainNotAllowlisted.selector, DESTINATION_A));
-        s_sender.dispatchDocument(s_documentId, DESTINATION_A);
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A, fee);
+    }
+
+    function test_quoteFeeAndMaximumProtectAgainstFeeIncrease() external {
+        uint256 quotedFee = s_sender.quoteFee(s_documentId, DESTINATION_A);
+        assertEq(quotedFee, s_router.FEE());
+
+        uint256 increasedFee = quotedFee + 0.25 ether;
+        s_router.setFee(increasedFee);
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.FeeExceedsMaximum.selector, increasedFee, quotedFee));
+        s_sender.dispatchDocument(s_documentId, DESTINATION_A, quotedFee);
+
+        EtherdocSender.DispatchRecord memory failedDispatch = s_sender.getDispatch(s_documentId, DESTINATION_A);
+        assertEq(uint8(failedDispatch.status), uint8(EtherdocSender.DispatchStatus.NOT_DISPATCHED));
+
+        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, increasedFee);
+        assertNotEq(messageId, bytes32(0));
+    }
+
+    function test_dispatchRejectsInsufficientFeeBalance() external {
+        uint256 fee = s_router.FEE();
+        EtherdocSender unfundedSender = new EtherdocSender(address(s_router), address(s_link));
+        unfundedSender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
+        bytes32 documentId = unfundedSender.registerDocument("ipfs://unfunded");
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.NotEnoughBalance.selector, uint256(0), fee));
+        unfundedSender.dispatchDocument(documentId, DESTINATION_A, fee);
+    }
+
+    function test_forceApproveSupportsTokenRequiringZeroAllowance() external {
+        ApprovalRestrictedToken token = new ApprovalRestrictedToken();
+        EtherdocSender sender = new EtherdocSender(address(s_router), address(token));
+        token.mint(address(sender), 10 ether);
+        sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
+        sender.configureRemote(DESTINATION_B, RECEIVER_B, GAS_LIMIT_B, true);
+        bytes32 documentId = sender.registerDocument("ipfs://approval-reset");
+
+        sender.dispatchDocument(documentId, DESTINATION_A, s_router.FEE());
+        sender.dispatchDocument(documentId, DESTINATION_B, s_router.FEE());
+
+        assertEq(token.allowance(address(sender), address(s_router)), s_router.FEE());
+    }
+
+    function test_dispatchRevertsWhenApprovalFails() external {
+        uint256 fee = s_router.FEE();
+        ApprovalRestrictedToken token = new ApprovalRestrictedToken();
+        EtherdocSender sender = new EtherdocSender(address(s_router), address(token));
+        token.mint(address(sender), 10 ether);
+        token.setApprovalsDisabled(true);
+        sender.configureRemote(DESTINATION_A, RECEIVER_A, GAS_LIMIT_A, true);
+        bytes32 documentId = sender.registerDocument("ipfs://approval-failure");
+
+        vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(token)));
+        sender.dispatchDocument(documentId, DESTINATION_A, fee);
+
+        EtherdocSender.DispatchRecord memory failedDispatch = sender.getDispatch(documentId, DESTINATION_A);
+        assertEq(uint8(failedDispatch.status), uint8(EtherdocSender.DispatchStatus.NOT_DISPATCHED));
+    }
+
+    function test_ownerCanWithdrawTokensWithEvent() external {
+        address treasury = makeAddr("treasury");
+        uint256 amount = 7 ether;
+        uint256 senderBalanceBefore = s_link.balanceOf(address(s_sender));
+
+        vm.expectEmit(true, true, false, true);
+        emit EtherdocSender.TokenWithdrawn(address(s_link), treasury, amount);
+        s_sender.withdrawToken(address(s_link), treasury, amount);
+
+        assertEq(s_link.balanceOf(treasury), amount);
+        assertEq(s_link.balanceOf(address(s_sender)), senderBalanceBefore - amount);
+    }
+
+    function test_withdrawTokenRejectsUnauthorizedAndZeroAddresses() external {
+        address treasury = makeAddr("treasury");
+
+        vm.prank(makeAddr("not-owner"));
+        vm.expectRevert(bytes("Only callable by owner"));
+        s_sender.withdrawToken(address(s_link), treasury, 1 ether);
+
+        vm.expectRevert(EtherdocSender.InvalidTokenAddress.selector);
+        s_sender.withdrawToken(address(0), treasury, 1 ether);
+
+        vm.expectRevert(EtherdocSender.InvalidWithdrawalRecipient.selector);
+        s_sender.withdrawToken(address(s_link), address(0), 1 ether);
+    }
+
+    function test_withdrawTokenRevertsWhenTransferFails() external {
+        ApprovalRestrictedToken token = new ApprovalRestrictedToken();
+        token.mint(address(s_sender), 1 ether);
+        token.setTransfersDisabled(true);
+
+        vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(token)));
+        s_sender.withdrawToken(address(token), makeAddr("treasury"), 1 ether);
     }
 }
