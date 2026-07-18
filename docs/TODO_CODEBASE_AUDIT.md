@@ -151,7 +151,7 @@ otomatis membuktikan identitas penerbit, validitas dokumen, atau bahwa dokumen b
 - Dokumen dapat dicabut tanpa menghapus histori.
 - Test membuktikan issuer yang tidak berizin/signature replay ditolak.
 
-### [ ] P0-04 Migrasikan deployment dari Holesky dan hapus konfigurasi jaringan hardcoded
+### [x] P0-04 Migrasikan deployment dari Holesky dan hapus konfigurasi jaringan hardcoded
 
 **Bukti:** `foundry.toml`, `.env-example`, dan kedua deployment script.
 
@@ -544,7 +544,7 @@ rotation yang eksplisit.
 ### Milestone 3 — Test dan config
 
 - [ ] Selesaikan negative/fuzz/invariant test matrix.
-- [ ] Hapus hardcoded network config dan Holesky.
+- [x] Hapus hardcoded network config dan Holesky.
 - [ ] Tambahkan fork + periodic E2E test.
 - [ ] Perketat CI dan format.
 
