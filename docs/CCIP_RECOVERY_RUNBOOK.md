@@ -54,8 +54,8 @@ tersedia pada
    `NOT_DISPATCHED`.
 2. Periksa LINK balance, allowance/Router error, remote config, lane health, dan fee.
 3. Perbaiki penyebabnya.
-4. Panggil `quoteFee(documentId, selector)`, tentukan toleransi fee, lalu panggil kembali
-   `dispatchDocument(documentId, selector, maximumFee)`.
+4. Operator memanggil `quoteFee(documentId, selector)`, menentukan toleransi fee, lalu memanggil
+   kembali `dispatchDocument(documentId, selector, maximumFee)`.
 5. Mulai monitoring untuk message ID baru dari `MessageSent`.
 
 Kegagalan transaksi source tidak dapat menghasilkan event persisten dari sender karena transaksi
@@ -105,25 +105,28 @@ dan `getReceipt(documentId).messageId` harus menunjuk pasangan yang sama.
 
 ## Pause dan resume
 
-Pause lane dilakukan dari konfigurasi yang sudah ada:
+Pauser dapat menghentikan alur tanpa memperoleh hak konfigurasi governance:
 
-1. Nonaktifkan dispatch baru di source dengan
-   `configureRemote(selector, receiver, gasLimit, false)`.
+1. Hentikan dispatch baru di source dengan `pauseDispatch()`.
 2. Inventarisasi semua message ID in-flight dan tunggu/triage satu per satu.
-3. Jika destination juga harus ditutup, panggil
-   `configureTrustedRemote(sourceSelector, sender, false)`. Pesan in-flight akan revert dan perlu
-   manual execution setelah lane dibuka kembali.
+3. Jika destination juga harus ditutup, panggil `pauseReceive()`. Pesan in-flight akan revert tanpa
+   receipt/processed marker dan perlu manual execution setelah receive dibuka kembali.
+4. Bila insiden menyangkut issuance, panggil `pauseRegistration()`. Revocation tetap tersedia agar
+   issuer dapat membatalkan dokumen yang terdampak.
 
 Urutan resume adalah destination lebih dahulu, lalu source:
 
-1. `configureTrustedRemote(sourceSelector, sender, true)`;
-2. manual execute semua pesan gagal/in-flight yang sah dan verifikasi receipt;
-3. `configureRemote(selector, receiver, gasLimit, true)`;
-4. lanjutkan dispatch baru.
+1. Governance memastikan akar masalah ditutup, role yang terdampak sudah dirotasi, dan remote config
+   benar.
+2. Governance memanggil `unpauseReceive()`.
+3. Manual execute semua pesan gagal/in-flight yang sah dan verifikasi receipt.
+4. Governance memanggil `unpauseDispatch()` dan, bila relevan, `unpauseRegistration()`.
+5. Lanjutkan dispatch baru.
 
-Setiap perubahan harus menggunakan deployment artifact terverifikasi, multisig/owner resmi, dan
-change record incident. Pemisahan role/timelock dan emergency pause global tetap menjadi pekerjaan
-governance terpisah.
+Perubahan remote khusus lane melalui `configureRemote(..., false)` atau
+`configureTrustedRemote(..., false)` tetap dapat dipakai sebagai tindakan governance tambahan.
+Setiap unpause/config change harus menggunakan deployment artifact terverifikasi, multisig resmi,
+dan change record incident. Lihat juga [governance runbook](GOVERNANCE_RUNBOOK.md).
 
 ## Incident evidence
 

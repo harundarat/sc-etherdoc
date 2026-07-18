@@ -5,17 +5,17 @@ more destination chains through Chainlink CCIP.
 
 ## Trust model and verification semantics
 
-Etherdoc is an issuer registry, not a legal identity provider. The source contract owner administers
-the trusted issuer set with `setIssuerAuthorization`. The deploying owner is the first authorized
-issuer. An authorized issuer may register directly, or a relayer may call `registerDocumentBySig`
-with the issuer's EIP-712 signature. Off-chain consumers remain responsible for mapping an issuer
-address to a real organization and deciding whether that organization is trusted for the document
-type being checked.
+Etherdoc is an issuer registry, not a legal identity provider. Source governance administers the
+trusted issuer set with `setIssuerAuthorization`; the initial issuer is an explicit constructor
+argument and is not implicitly the deployer. An authorized issuer may register directly, or a
+relayer may call `registerDocumentBySig` with the issuer's EIP-712 signature. Off-chain consumers
+remain responsible for mapping an issuer address to a real organization and deciding whether that
+organization is trusted for the document type being checked.
 
 Issuer authorization gates new registrations and superseding records. Removing an issuer prevents
 new issuance but does not invalidate its historical records automatically. The original issuer can
 still revoke its existing records, so removing issuance permission does not remove the recovery
-path. Contract ownership alone does not let the administrator rewrite or revoke another issuer's
+path. Governance ownership alone does not let the administrator rewrite or revoke another issuer's
 record.
 
 Verification terms have deliberately separate meanings:
@@ -56,9 +56,9 @@ Registration and cross-chain dispatch are separate operations:
    corresponding EIP-712 relayer function.
 2. Configure each destination lane atomically with
    `configureRemote(selector, receiver, gasLimit, true)`.
-3. Call `quoteFee(documentId, selector)`, choose the largest acceptable LINK fee, then call
-   `dispatchDocument(documentId, selector, maximumFee)` in a separate transaction for every
-   destination.
+3. The configured operator calls `quoteFee(documentId, selector)`, chooses the largest acceptable
+   LINK fee, then calls `dispatchDocument(documentId, selector, maximumFee)` in a separate
+   transaction for every destination.
 4. Read `getDispatch(documentId, selector)` to track the CCIP `messageId`, destination, receiver,
    configured gas limit, document version, send timestamp, and source-side dispatch status for each
    lane.
@@ -73,14 +73,14 @@ version, that new state can be dispatched to the same lane. Historical dispatch 
 available through `getDispatchAtVersion`.
 
 The sender uses a treasury-funded LINK model: LINK is transferred to the sender ahead of dispatch,
-and only the owner can spend it through `dispatchDocument`. It does not pull fees from document
-issuers or relayers and does not support native-fee payment. A quote is only a point-in-time Router
-estimate, not a reservation; the fee may change before mining. The required `maximumFee` bounds that
-race, so an orchestrator should apply an explicit tolerance to the quote and requote after
-`FeeExceedsMaximum` instead of using an unlimited value.
+and only an authorized operator can spend it through `dispatchDocument`. It does not pull fees from
+document issuers or relayers and does not support native-fee payment. A quote is only a point-in-time
+Router estimate, not a reservation; the fee may change before mining. The required `maximumFee`
+bounds that race, so an orchestrator should apply an explicit tolerance to the quote and requote
+after `FeeExceedsMaximum` instead of using an unlimited value.
 
 LINK approval uses `SafeERC20.forceApprove` for tokens that require resetting a non-zero allowance.
-The owner can return excess LINK or rescue any other ERC-20 with
+Governance can return excess LINK or rescue any other ERC-20 with
 `withdrawToken(token, recipient, amount)`; zero token and recipient addresses are rejected and every
 successful withdrawal emits `TokenWithdrawn`. Operators should retain enough LINK for pending
 dispatches and send withdrawals to the configured treasury.
@@ -111,6 +111,22 @@ source Router has accepted a dispatch, recover the same message ID instead of se
 payload. See the [CCIP recovery runbook](docs/CCIP_RECOVERY_RUNBOOK.md) for monitoring, triage, manual
 execution, lane pause/resume, and incident evidence.
 
+## Governance and emergency controls
+
+Production `owner()` addresses must be multisig contracts supplied explicitly at deployment.
+Governance controls issuers, operational roles, remotes, treasury withdrawal, and unpause. A separate
+`OPERATOR_ROLE` can only dispatch; `PAUSER_ROLE` can pause registration/dispatch on the sender and
+receive on the destination. Relayers receive no privileged role and can only submit valid issuer
+signatures. Ownership transfer remains two-step through `transferOwnership` and `acceptOwnership`.
+
+A registration pause still permits issuer-authorized revocation. A receive pause deliberately
+reverts CCIP execution without marking the message processed, so the same message ID can be retried.
+Only governance can unpause after incident review; resume destination receive before source
+dispatch. Contracts are intentionally non-upgradeable—logic changes use redeployment and explicit
+remote rotation. See the
+[governance and emergency pause runbook](docs/GOVERNANCE_RUNBOOK.md) for the role matrix, deployment,
+rotation, and recovery policy.
+
 ## Development
 
 ```shell
@@ -136,7 +152,9 @@ CCIP network support can change. Recheck both Directory pages and update `direct
 before a production-like deployment.
 
 Copy `.env-example` to `.env`, provide both RPC URLs, and load it into the shell. Deploy and
-configure are deliberately separate:
+configure are deliberately separate. Set `GOVERNANCE` to the production multisig plus explicit
+`INITIAL_ISSUER`, `OPERATOR`, and `PAUSER` addresses before source deployment; receiver deployment
+uses `GOVERNANCE` and `PAUSER`:
 
 ```shell
 set -a
@@ -179,4 +197,6 @@ Every deploy/configure command performs preflight validation before broadcasting
 - missing deployment artifacts and unsupported fee modes fail with explicit custom errors.
 
 The current sender pays fees in LINK. Setting `feeMode` to `NATIVE` is rejected until native fee
-payment is implemented in the contract.
+payment is implemented in the contract. The configure commands can broadcast directly only when
+their signer is governance. For production multisig ownership, review the validated parameters and
+execute the equivalent `configureTrustedRemote` and `configureRemote` calldata through the multisig.
