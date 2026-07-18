@@ -243,7 +243,8 @@ tidak mengubah receipt, ditandai processed, dan memancarkan `MessageIgnored`. Pa
 provenance/state yang konflik, atau transisi baru setelah state terminal tetap revert. Karena
 `allowOutOfOrderExecution` dipertahankan, schema v1 membatasi `REGISTER` ke version 1 dan
 `REVOKE`/`SUPERSEDE` ke terminal version 2; test mengirim revocation lebih dulu lalu registration lama
-dan membuktikan dokumen tidak aktif kembali (`test/EtherdocLifecycle.t.sol:232-381`).
+dan membuktikan dokumen tidak aktif kembali
+(`EtherdocLifecycleTest.test_outOfOrderOlderMessageCannotReactivateRevokedDocument`).
 
 **TODO:**
 
@@ -257,10 +258,23 @@ dan membuktikan dokumen tidak aktif kembali (`test/EtherdocLifecycle.t.sol:232-3
 - Jika `allowOutOfOrderExecution = true` dipertahankan, pastikan version/nonce monoton dan pesan lama
   tidak dapat mengaktifkan kembali dokumen yang sudah revoked.
 
-### [ ] P1-04 Rancang recovery untuk receiver failure dan retry dispatch
+### [x] P1-04 Rancang recovery untuk receiver failure dan retry dispatch
 
-**Bukti:** `_ccipReceive` selalu revert untuk source/sender/payload yang tidak sesuai; sender tidak
-memiliki jalur retry setelah CID ditandai ada.
+**Bukti terkini:** bukti awal sudah stale karena registrasi dan dispatch telah dipisah. Router source
+yang revert tidak meninggalkan dispatch record sehingga lane/version yang sama dapat dipanggil lagi
+(`src/EtherdocSender.sol:235-291`; `test/EtherdocSender.t.sol:181-202`). Setelah Router menerima
+pesan, strategi yang dipilih adalah receiver tetap revert dan operator melakukan manual CCIP
+execution dengan message ID yang sama. Receiver hanya menandai pesan processed setelah sukses;
+autentikasi, payload, dan transisi invalid tidak menghasilkan receipt.
+
+`EtherdocLifecycleTest.test_failedDestinationExecutionCanRetrySameMessage` memodelkan status
+eksekusi Router `FAILURE`, menyimpan return data custom error untuk monitoring, membuktikan
+kegagalan autentikasi tidak tertelan, lalu mengeksekusi ulang message ID yang sama setelah
+konfigurasi diperbaiki hingga status `SUCCESS`.
+Runbook `docs/CCIP_RECOVERY_RUNBOOK.md` mendokumentasikan monitoring, perbedaan retry source dengan
+manual execution destination, gas override, pause/resume lane, validasi setelah recovery, dan
+incident evidence. Event receiver tidak dipakai sebagai failure signal karena event ikut di-revert;
+status dan return data CCIP adalah bukti gagal yang persisten.
 
 **TODO:**
 
