@@ -11,6 +11,9 @@ broadcast
 # Dotenv file
 .env
 
+# Generated deployment address books
+deployments/**/*.json
+
 # VSCode Extension
 .wake
 .vscode
