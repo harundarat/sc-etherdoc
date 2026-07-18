@@ -357,10 +357,27 @@ governance membutuhkannya.
 - Hindari proxy upgradeability kecuali kebutuhan upgrade dan governance benar-benar didefinisikan;
   redeploy + remote rotation sering lebih sederhana dan memiliki trust surface lebih kecil.
 
-### [ ] P1-07 Definisikan canonical hashing/CID dan kebijakan IPFS
+### [x] P1-07 Definisikan canonical hashing/CID dan kebijakan IPFS
 
-Kode upload/IPFS tidak ada di repo ini, sehingga alur upload, pinning, dan frontend belum dapat
-diaudit. Namun contract interface saat ini menerima string apa pun sebagai "CID".
+**Bukti terkini:** bukti awal sudah stale sebagian karena `bytes32 documentId` telah digunakan, tetapi
+identitas konten masih berupa `keccak256` atas teks CID dan source hanya memeriksa string tidak kosong
+serta panjang maksimum. Implementasi schema v2 sekarang menetapkan SHA-256 byte file mentah sebagai
+`contentDigest` utama dan `documentId = keccak256(abi.encode(issuer, contentDigest))`.
+`src/EtherdocTypes.sol`, `src/EtherdocSender.sol`, dan `src/EtherdocReceiver.sol`.
+
+CID retrieval dibatasi ke CIDv1 canonical: bare lowercase unpadded base32, codec `raw` atau `dag-pb`,
+dan multihash SHA2-256 32 byte. Kedua endpoint mendecode dan memvalidasi CID serta menyimpan
+`cidCodec`/`cidDigest`; raw CID juga harus memiliki multihash yang sama dengan digest file. Signature
+EIP-712 version 2 mengikat digest file dan metadata CID, sementara payload CCIP schema v2 menolak
+record legacy atau inkonsisten. Test mencakup fixture CID known-answer, URI/prefix/karakter/padding
+non-canonical, codec unsupported, raw digest mismatch, dag-pb, metadata receiver yang diubah, serta
+alur signature dan cross-chain.
+
+Canonicalization, upload gate, minimal dua pin lintas failure domain, full retrieval health check,
+retention, backup/CAR recovery, privacy/encryption, dan langkah verifier ditetapkan di
+`docs/IPFS_POLICY.md` serta dirujuk README. Kode uploader/pinning/frontend tetap tidak berada dalam
+repo smart contract ini; policy tersebut menjadi requirement wajib bagi integrasi off-chain dan
+secara eksplisit melarang registrasi sebelum pin/retrieval gate lulus.
 
 **TODO:**
 
