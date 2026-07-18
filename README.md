@@ -75,6 +75,21 @@ destination received or processed it; destination events and CCIP message status
 separately. The destination applies only a higher record version, so an out-of-order older message
 cannot reactivate a revoked or superseded document.
 
+CCIP data uses the versioned `DocumentPayload` envelope. Schema version 1 binds the operation
+(`REGISTER`, `REVOKE`, or `SUPERSEDE`), canonical document ID, document version, and full provenance
+record. Both endpoints reject an empty CID, CIDs longer than 256 bytes, unsupported or internally
+inconsistent envelopes, and encoded payloads larger than 1,024 bytes. A CID remains an opaque
+application identifier; clients that require a particular URI or multibase representation should
+enforce that policy before registration.
+
+The receiver authenticates the source pair before decoding payload data and records every
+successfully handled CCIP `messageId`. Re-delivery of the same message and a distinct message carrying
+an equal or older document version are ignored idempotently and emit `MessageIgnored`; invalid or
+conflicting payloads revert. `isMessageProcessed(messageId)` and `getMessageDocument(messageId)`
+provide replay and indexing evidence. Out-of-order execution remains enabled, but schema v1 permits
+only version 1 `REGISTER` records followed by one version 2 terminal operation, so an older active
+record cannot overwrite a received revocation or supersession.
+
 ## Development
 
 ```shell
