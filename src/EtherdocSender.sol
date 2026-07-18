@@ -7,13 +7,45 @@ import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
 import {LinkTokenInterface} from "@chainlink/contracts/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
 
 contract EtherdocSender is OwnerIsCreator {
+    enum DispatchStatus {
+        NOT_DISPATCHED,
+        DISPATCHED
+    }
+
+    struct DocumentRecord {
+        string documentCID;
+        uint64 registeredAt;
+        bool exists;
+    }
+
+    struct DispatchRecord {
+        bytes32 messageId;
+        uint64 destinationChainSelector;
+        address receiver;
+        uint64 sentAt;
+        DispatchStatus status;
+    }
+
+    struct DestinationConfig {
+        address receiver;
+        bool allowlisted;
+    }
+
     error NotEnoughBalance(uint256 currentBalance, uint256 calculatedFees);
-    error DocumentAlreadyExists(string documentCID);
+    error InvalidDocumentCID();
+    error DocumentAlreadyRegistered(bytes32 documentId);
+    error DocumentNotRegistered(bytes32 documentId);
+    error DocumentAlreadyDispatched(bytes32 documentId, uint64 destinationChainSelector);
     error InvalidReceiverAddress();
     error DestinationChainNotAllowlisted(uint64 destinationChainSelector);
 
+    event DocumentRegistered(bytes32 indexed documentId, string documentCID, uint64 registeredAt);
+    event DestinationChainConfigured(
+        uint64 indexed destinationChainSelector, address indexed receiver, bool allowlisted
+    );
     event MessageSent(
         bytes32 indexed messageId,
+        bytes32 indexed documentId,
         uint64 indexed destinationChainSelector,
         address receiver,
         string documentCID,
@@ -21,81 +53,135 @@ contract EtherdocSender is OwnerIsCreator {
         uint256 fees
     );
 
-    IRouterClient private s_router;
-    LinkTokenInterface private s_linkToken;
-    mapping(string documentCID => bool exists) private s_documents;
-    mapping(uint64 destinationChainSelector => bool) private s_allowlistedDestinationChains;
+    IRouterClient private immutable i_router;
+    LinkTokenInterface private immutable i_linkToken;
+    mapping(bytes32 documentId => DocumentRecord document) private s_documents;
+    mapping(bytes32 documentId => mapping(uint64 destinationChainSelector => DispatchRecord dispatchRecord)) private
+        s_dispatches;
+    mapping(uint64 destinationChainSelector => DestinationConfig config) private s_destinations;
 
     constructor(address _router, address _link) {
-        s_router = IRouterClient(_router);
-        s_linkToken = LinkTokenInterface(_link);
+        i_router = IRouterClient(_router);
+        i_linkToken = LinkTokenInterface(_link);
     }
 
     /**
-     * @notice Adds a new document and sends it to a destination chain via CCIP
-     * @dev This function validates the destination chain, receiver address, and document uniqueness
-     *      before creating and sending a cross-chain message. The function requires LINK tokens
-     *      for paying CCIP fees.
-     * @param _destinationChainSelector The CCIP chain selector for the target blockchain
-     * @param _receiver The address on the destination chain that will receive the document
-     * @param _documentCID The Content Identifier (CID) of the document to be added and sent
-     * @return messageId The unique identifier of the CCIP message sent
-     * @custom:requirements
-     * - Caller must be the contract owner
-     * - Destination chain must be allowlisted
-     * - Receiver address cannot be zero address
-     * - Document CID must not already exist
-     * - Contract must have sufficient LINK token balance for fees
-     * @custom:emits MessageSent event with message details including fees paid
-     * @custom:reverts DestinationChainNotAllowlisted if chain is not allowlisted
-     * @custom:reverts InvalidReceiverAddress if receiver is zero address
-     * @custom:reverts DocumentAlreadyExists if document CID already exists
-     * @custom:reverts NotEnoughBalance if insufficient LINK tokens for fees
+     * @notice Registers a canonical document without dispatching it cross-chain.
+     * @param _documentCID The Content Identifier (CID) of the document.
+     * @return documentId The deterministic identifier derived from the CID.
      */
-    function addDocument(uint64 _destinationChainSelector, address _receiver, string calldata _documentCID)
+    function registerDocument(string calldata _documentCID) external onlyOwner returns (bytes32 documentId) {
+        if (bytes(_documentCID).length == 0) {
+            revert InvalidDocumentCID();
+        }
+
+        documentId = keccak256(bytes(_documentCID));
+        if (s_documents[documentId].exists) {
+            revert DocumentAlreadyRegistered(documentId);
+        }
+
+        uint64 registeredAt = uint64(block.timestamp);
+        s_documents[documentId] = DocumentRecord({documentCID: _documentCID, registeredAt: registeredAt, exists: true});
+
+        emit DocumentRegistered(documentId, _documentCID, registeredAt);
+    }
+
+    /**
+     * @notice Dispatches a registered document to one configured destination lane.
+     * @dev A failed router call reverts without creating a dispatch record, so the same lane can be
+     *      retried. A successful lane cannot be dispatched again through this function.
+     * @param _documentId The canonical document identifier returned by registerDocument.
+     * @param _destinationChainSelector The CCIP selector of the destination lane.
+     * @return messageId The unique identifier of the accepted CCIP message.
+     */
+    function dispatchDocument(bytes32 _documentId, uint64 _destinationChainSelector)
         external
         onlyOwner
         returns (bytes32 messageId)
     {
-        if (!s_allowlistedDestinationChains[_destinationChainSelector]) {
+        DestinationConfig memory destination = s_destinations[_destinationChainSelector];
+        if (!destination.allowlisted) {
             revert DestinationChainNotAllowlisted(_destinationChainSelector);
         }
+
+        DocumentRecord storage document = s_documents[_documentId];
+        if (!document.exists) {
+            revert DocumentNotRegistered(_documentId);
+        }
+
+        if (s_dispatches[_documentId][_destinationChainSelector].status == DispatchStatus.DISPATCHED) {
+            revert DocumentAlreadyDispatched(_documentId, _destinationChainSelector);
+        }
+
+        Client.EVM2AnyMessage memory evm2AnyMessage = Client.EVM2AnyMessage({
+            receiver: abi.encode(destination.receiver),
+            data: abi.encode(document.documentCID),
+            tokenAmounts: new Client.EVMTokenAmount[](0),
+            extraArgs: Client._argsToBytes(
+                Client.GenericExtraArgsV2({gasLimit: 200_000, allowOutOfOrderExecution: true})
+            ),
+            feeToken: address(i_linkToken)
+        });
+
+        uint256 fees = i_router.getFee(_destinationChainSelector, evm2AnyMessage);
+        uint256 linkBalance = i_linkToken.balanceOf(address(this));
+        if (fees > linkBalance) {
+            revert NotEnoughBalance(linkBalance, fees);
+        }
+
+        i_linkToken.approve(address(i_router), fees);
+        messageId = i_router.ccipSend(_destinationChainSelector, evm2AnyMessage);
+
+        uint64 sentAt = uint64(block.timestamp);
+        s_dispatches[_documentId][_destinationChainSelector] = DispatchRecord({
+            messageId: messageId,
+            destinationChainSelector: _destinationChainSelector,
+            receiver: destination.receiver,
+            sentAt: sentAt,
+            status: DispatchStatus.DISPATCHED
+        });
+
+        emit MessageSent(
+            messageId,
+            _documentId,
+            _destinationChainSelector,
+            destination.receiver,
+            document.documentCID,
+            address(i_linkToken),
+            fees
+        );
+    }
+
+    function configureDestinationChain(uint64 _destinationChainSelector, address _receiver, bool _allowlisted)
+        external
+        onlyOwner
+    {
         if (_receiver == address(0)) {
             revert InvalidReceiverAddress();
         }
-        if (s_documents[_documentCID]) {
-            revert DocumentAlreadyExists(_documentCID);
-        }
 
-        s_documents[_documentCID] = true;
+        s_destinations[_destinationChainSelector] = DestinationConfig({receiver: _receiver, allowlisted: _allowlisted});
 
-        Client.EVM2AnyMessage memory evm2AnyMessage = Client.EVM2AnyMessage({
-            receiver: abi.encode(_receiver),
-            data: abi.encode(_documentCID),
-            tokenAmounts: new Client.EVMTokenAmount[](0),
-            extraArgs: Client._argsToBytes(Client.GenericExtraArgsV2({gasLimit: 200_000, allowOutOfOrderExecution: true})),
-            feeToken: address(s_linkToken)
-        });
-
-        uint256 fees = s_router.getFee(_destinationChainSelector, evm2AnyMessage);
-        if (fees > s_linkToken.balanceOf(address(this))) {
-            revert NotEnoughBalance(s_linkToken.balanceOf(address(this)), fees);
-        }
-
-        s_linkToken.approve(address(s_router), fees);
-
-        messageId = s_router.ccipSend(_destinationChainSelector, evm2AnyMessage);
-
-        emit MessageSent(messageId, _destinationChainSelector, _receiver, _documentCID, address(s_linkToken), fees);
-
-        return messageId;
+        emit DestinationChainConfigured(_destinationChainSelector, _receiver, _allowlisted);
     }
 
-    function allowlistDestinationChain(uint64 _destinationChainSelector, bool _allowlisted) external onlyOwner {
-        s_allowlistedDestinationChains[_destinationChainSelector] = _allowlisted;
+    function getDocument(bytes32 _documentId) external view returns (DocumentRecord memory) {
+        return s_documents[_documentId];
     }
 
-    function documentExists(string calldata _documentCID) external view returns (bool) {
-        return s_documents[_documentCID];
+    function getDispatch(bytes32 _documentId, uint64 _destinationChainSelector)
+        external
+        view
+        returns (DispatchRecord memory)
+    {
+        return s_dispatches[_documentId][_destinationChainSelector];
+    }
+
+    function getDestinationConfig(uint64 _destinationChainSelector) external view returns (DestinationConfig memory) {
+        return s_destinations[_destinationChainSelector];
+    }
+
+    function isDocumentRegistered(bytes32 _documentId) external view returns (bool) {
+        return s_documents[_documentId].exists;
     }
 }

@@ -10,10 +10,12 @@ contract EtherdocSenderScript is Script {
     function setUp() public {}
 
     function run() public {
+        address destinationReceiver = vm.envAddress("DESTINATION_RECEIVER");
+
         vm.startBroadcast();
         etherdocSender =
             new EtherdocSender(0xb9531b46fE8808fB3659e39704953c2B1112DD43, 0x685cE6742351ae9b618F383883D6d1e0c5A31B4B);
-        etherdocSender.allowlistDestinationChain(10344971235874465080, true); // Base Sepolia
+        etherdocSender.configureDestinationChain(10344971235874465080, destinationReceiver, true); // Base Sepolia
         vm.stopBroadcast();
 
         console.log("EtherdocSender deployed at:", address(etherdocSender));

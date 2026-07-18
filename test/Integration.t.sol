@@ -24,7 +24,7 @@ contract Integration is Test {
         etherdocSender = new EtherdocSender(address(sourceRouter), address(link));
         etherdocReceiver = new EtherdocReceiver(address(destinationRouter));
 
-        etherdocSender.allowlistDestinationChain(destinationChainSelector, true);
+        etherdocSender.configureDestinationChain(destinationChainSelector, address(etherdocReceiver), true);
         etherdocReceiver.allowListSourceChain(chainSelector, true);
         etherdocReceiver.allowlistSender(address(etherdocSender), true);
     }
@@ -32,14 +32,15 @@ contract Integration is Test {
     function test_sendAndReceiveCrossChainMessagePayFeesInLink() external {
         ccipLocalSimulator.requestLinkFromFaucet(address(etherdocSender), 10 ether);
 
-        string memory messageToSend = "hello";
+        string memory documentCID = "hello";
 
-        etherdocSender.addDocument(destinationChainSelector, address(etherdocReceiver), messageToSend);
+        bytes32 documentId = etherdocSender.registerDocument(documentCID);
+        etherdocSender.dispatchDocument(documentId, destinationChainSelector);
 
-        bool isExistInSourceChain = etherdocSender.documentExists(messageToSend);
-        bool isExistInDestinationChain = etherdocReceiver.documentExists(messageToSend);
+        bool isRegisteredInSourceChain = etherdocSender.isDocumentRegistered(documentId);
+        bool isExistInDestinationChain = etherdocReceiver.documentExists(documentCID);
 
-        assertEq(isExistInSourceChain, true);
+        assertEq(isRegisteredInSourceChain, true);
         assertEq(isExistInDestinationChain, true);
     }
 }
