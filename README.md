@@ -1,7 +1,7 @@
 # Etherdoc
 
-Etherdoc registers a canonical document CID on a source chain and dispatches that document to one or
-more destination chains through Chainlink CCIP.
+Etherdoc registers a canonical file digest and CIDv1 retrieval reference on a source chain, then
+dispatches that record to one or more destination chains through Chainlink CCIP.
 
 ## Trust model and verification semantics
 
@@ -20,7 +20,8 @@ record.
 
 Verification terms have deliberately separate meanings:
 
-- **Integrity**: the supplied CID produces the stored `contentCommitment`.
+- **Integrity**: SHA-256 of the exact bytes downloaded through the CID equals the stored
+  `contentDigest`.
 - **Existence/timestamping**: a record was registered at `registeredAt` on `sourceChainId`.
 - **Authenticity**: the source contract accepted the record from an authorized issuer, directly or
   through a valid EIP-712 signature. This is only as strong as the off-chain trust mapping for that
@@ -28,23 +29,38 @@ Verification terms have deliberately separate meanings:
 - **Validity**: the current record status is `ACTIVE`; `REVOKED` and `SUPERSEDED` records remain
   queryable but are not valid.
 
-`verifyDocument(documentId, cid)` returns the full record, an integrity result, and current validity.
-It does not collapse those claims into one "authentic" boolean.
+`verifyDocument(documentId, contentDigest)` compares a caller-supplied digest with the record and
+returns the full record, an integrity result, and current validity. The contract cannot download
+IPFS content: a verifier must download it and calculate SHA-256 first. The function does not collapse
+integrity, issuer trust, and validity into one "authentic" boolean.
 
 ## Document provenance
 
-`documentId` is `keccak256(abi.encode(issuer, keccak256(bytes(cid))))`, so two issuers may attest to
-the same content independently. Every record stores the document ID, CID and content commitment,
-optional `bytes32` metadata commitment, issuer, source chain ID, registration/update timestamps,
-schema version, monotonic record version, status, and supersession links. Store only a commitment to
-sensitive metadata; do not put PII plaintext in the CID or metadata field.
+The primary content identifier is SHA-256 of the exact uploaded file bytes. `documentId` is
+`keccak256(abi.encode(issuer, contentDigest))`, so changing a filename, MIME type, gateway URL, or
+IPFS DAG layout does not change the document identity, while changing one file byte does. Two
+issuers may attest to the same bytes independently.
+
+Every record stores the document ID, raw-file digest, canonical CIDv1, decoded CID codec and
+multihash digest, optional `bytes32` metadata commitment, issuer, source chain ID,
+registration/update timestamps, schema version, monotonic record version, status, and supersession
+links. The accepted CID profile is CIDv1, lowercase unpadded base32 without an `ipfs://` prefix,
+`raw` (`0x55`) or `dag-pb` (`0x70`) codec, and a 32-byte SHA2-256 multihash. For a `raw` CID, its
+multihash must equal `contentDigest`; for `dag-pb`, the DAG-root hash and raw-file hash are expected
+to differ and both are retained.
+
+Hash bytes exactly as uploaded: Etherdoc performs no line-ending, Unicode, text-encoding, archive,
+PDF-metadata, or EXIF normalization. Privacy-sensitive documents must be encrypted before upload;
+the digest then commits to the ciphertext, and encryption keys remain off-chain. The complete
+canonicalization, verifier, pinning, retention, and recovery requirements are in the
+[IPFS and content integrity policy](docs/IPFS_POLICY.md).
 
 Records start at version 1 with status `ACTIVE`. `revokeDocument` increments the version and changes
 the status to `REVOKED` without deleting the CID, issuer, timestamps, or prior dispatch records.
 `supersedeDocument` marks the old record `SUPERSEDED`, links it to a new active record, and preserves
 both sides of the history. Revoked and superseded records cannot be reactivated.
 
-Relayed registration, revocation, and supersession use the EIP-712 domain `Etherdoc`, version `1`,
+Relayed registration, revocation, and supersession use the EIP-712 domain `Etherdoc`, version `2`,
 the current chain ID, and the sender contract address. Each signature has an issuer-scoped monotonic
 nonce and deadline. A successful signed operation consumes one nonce, preventing replay.
 
@@ -52,14 +68,17 @@ nonce and deadline. A successful signed operation consumes one nonce, preventing
 
 Registration and cross-chain dispatch are separate operations:
 
-1. Authorize the issuer, then call `registerDocument(cid[, metadataCommitment])` directly or use the
-   corresponding EIP-712 relayer function.
-2. Configure each destination lane atomically with
+1. Hash the exact upload bytes with SHA-256, upload them using the canonical IPFS profile, and meet
+   the pin-confirmation gate in the IPFS policy.
+2. Authorize the issuer, then call
+   `registerDocument(contentDigest, cid[, metadataCommitment])` directly or use the corresponding
+   EIP-712 relayer function.
+3. Configure each destination lane atomically with
    `configureRemote(selector, receiver, gasLimit, true)`.
-3. The configured operator calls `quoteFee(documentId, selector)`, chooses the largest acceptable
+4. The configured operator calls `quoteFee(documentId, selector)`, chooses the largest acceptable
    LINK fee, then calls `dispatchDocument(documentId, selector, maximumFee)` in a separate
    transaction for every destination.
-4. Read `getDispatch(documentId, selector)` to track the CCIP `messageId`, destination, receiver,
+5. Read `getDispatch(documentId, selector)` to track the CCIP `messageId`, destination, receiver,
    configured gas limit, document version, send timestamp, and source-side dispatch status for each
    lane.
 
@@ -90,12 +109,12 @@ destination received or processed it; destination events and CCIP message status
 separately. The destination applies only a higher record version, so an out-of-order older message
 cannot reactivate a revoked or superseded document.
 
-CCIP data uses the versioned `DocumentPayload` envelope. Schema version 1 binds the operation
+CCIP data uses the versioned `DocumentPayload` envelope. Schema version 2 binds the operation
 (`REGISTER`, `REVOKE`, or `SUPERSEDE`), canonical document ID, document version, and full provenance
-record. Both endpoints reject an empty CID, CIDs longer than 256 bytes, unsupported or internally
-inconsistent envelopes, and encoded payloads larger than 1,024 bytes. A CID remains an opaque
-application identifier; clients that require a particular URI or multibase representation should
-enforce that policy before registration.
+record. Both endpoints reject a zero file digest, a non-canonical or unsupported CID, inconsistent
+decoded CID metadata, raw CID/file-digest mismatches, unsupported or internally inconsistent
+envelopes, and encoded payloads larger than 1,024 bytes. Schema-v1 payloads are intentionally
+incompatible and require a new deployment/remote rotation rather than being silently reinterpreted.
 
 The receiver authenticates the source pair before decoding payload data and records every
 successfully handled CCIP `messageId`. Re-delivery of the same message and a distinct message carrying
