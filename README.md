@@ -54,10 +54,12 @@ Registration and cross-chain dispatch are separate operations:
 
 1. Authorize the issuer, then call `registerDocument(cid[, metadataCommitment])` directly or use the
    corresponding EIP-712 relayer function.
-2. Configure each destination lane with `configureDestinationChain(selector, receiver, true)`.
+2. Configure each destination lane atomically with
+   `configureRemote(selector, receiver, gasLimit, true)`.
 3. Call `dispatchDocument(documentId, selector)` in a separate transaction for every destination.
 4. Read `getDispatch(documentId, selector)` to track the CCIP `messageId`, destination, receiver,
-   document version, send timestamp, and source-side dispatch status for each lane.
+   configured gas limit, document version, send timestamp, and source-side dispatch status for each
+   lane.
 
 Cross-chain replication is asynchronous and non-atomic. Dispatching to several chains is one
 off-chain orchestrated workflow, not one transaction that becomes final everywhere simultaneously.
