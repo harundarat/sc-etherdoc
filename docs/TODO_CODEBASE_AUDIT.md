@@ -85,7 +85,7 @@ coverage 0% menegaskan bahwa seluruh jalur error belum diuji.
 - Test membuktikan duplicate dispatch pada lane yang sama ditolak/idempotent, tetapi dispatch ke lane
   berbeda diperbolehkan.
 
-### [ ] P0-02 Gunakan lifecycle status; jangan samakan `sent` dengan `verified`
+### [x] P0-02 Gunakan lifecycle status; jangan samakan `sent` dengan `verified`
 
 **Bukti:** `src/EtherdocSender.sol:70-89` dan `src/EtherdocReceiver.sol:57-64`.
 
