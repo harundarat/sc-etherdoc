@@ -56,6 +56,45 @@ contract EtherdocNegativeTest is Test {
         new EtherdocReceiver(address(s_router), address(this), address(0));
     }
 
+    function test_senderConstructorRejectsInvalidRouterAndLinkDependencies() external {
+        address routerWithoutCode = makeAddr("router-without-code");
+        address linkWithoutCode = makeAddr("link-without-code");
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.InvalidRouter.selector, address(0)));
+        new EtherdocSender(address(0), address(s_link), address(this), address(this), address(this), address(this));
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.InvalidRouter.selector, routerWithoutCode));
+        new EtherdocSender(
+            routerWithoutCode, address(s_link), address(this), address(this), address(this), address(this)
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.InvalidLinkToken.selector, address(0)));
+        new EtherdocSender(address(s_router), address(0), address(this), address(this), address(this), address(this));
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.InvalidLinkToken.selector, linkWithoutCode));
+        new EtherdocSender(
+            address(s_router), linkWithoutCode, address(this), address(this), address(this), address(this)
+        );
+    }
+
+    function test_receiverConstructorRejectsRouterWithoutCode() external {
+        address routerWithoutCode = makeAddr("receiver-router-without-code");
+
+        vm.expectRevert(abi.encodeWithSelector(CCIPReceiver.InvalidRouter.selector, routerWithoutCode));
+        new EtherdocReceiver(routerWithoutCode, address(this), address(this));
+    }
+
+    function test_constructorsAcceptDeployedDependencies() external {
+        EtherdocSender sender = new EtherdocSender(
+            address(s_router), address(s_link), address(this), address(this), address(this), address(this)
+        );
+        EtherdocReceiver receiver = new EtherdocReceiver(address(s_router), address(this), address(this));
+
+        assertEq(sender.getRouter(), address(s_router));
+        assertEq(sender.getFeeToken(), address(s_link));
+        assertEq(receiver.getRouter(), address(s_router));
+    }
+
     function test_onlyGovernanceCanUseEverySenderAdminFunction() external {
         address attacker = makeAddr("attacker");
         bytes memory onlyOwner = bytes("Only callable by owner");
