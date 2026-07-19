@@ -9,10 +9,9 @@ fs_permissions = [
     { access = "read-write", path = "./deployments" },
 ]
 remappings = [
-    "@chainlink/local/=lib/chainlink-local/",
-    "@chainlink/contracts/=lib/chainlink-local/lib/chainlink-evm/contracts/",
-    "@chainlink/contracts-ccip/=lib/chainlink-local/lib/chainlink-ccip/chains/evm/",
-    "@openzeppelin/contracts@5.0.2/=lib/chainlink-local/src/vendor/openzeppelin-solidity/v5.0.2/contracts/",
+    "@chainlink/contracts/=lib/chainlink-evm/contracts/",
+    "@chainlink/contracts-ccip/=lib/chainlink-ccip/chains/evm/",
+    "@openzeppelin/contracts@5.3.0/=lib/openzeppelin-contracts/contracts/",
 ]
 
 [rpc_endpoints]
