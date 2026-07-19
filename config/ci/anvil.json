@@ -1,0 +1,15 @@
+{
+  "networks": {
+    "local": {
+      "chainId": 31337,
+      "chainSelector": 1,
+      "router": "0x0000000000000000000000000000000000001001",
+      "linkToken": "0x0000000000000000000000000000000000001002",
+      "explorer": "http://127.0.0.1:8545",
+      "rpcAlias": "local",
+      "gasLimit": 500000,
+      "feeMode": "LINK",
+      "directoryVerifiedAt": 1
+    }
+  }
+}
