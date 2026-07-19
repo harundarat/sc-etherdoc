@@ -9,6 +9,8 @@
       "rpcAlias": "mantle_sepolia",
       "gasLimit": 500000,
       "feeMode": "LINK",
+      "governanceMode": "DIRECT",
+      "production": false,
       "directoryVerifiedAt": 1784419200
     },
     "inkSepolia": {
@@ -20,6 +22,8 @@
       "rpcAlias": "ink_sepolia",
       "gasLimit": 500000,
       "feeMode": "LINK",
+      "governanceMode": "DIRECT",
+      "production": false,
       "directoryVerifiedAt": 1784419200
     }
   }

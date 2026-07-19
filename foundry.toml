@@ -10,6 +10,7 @@ ignored_warnings_from = ["lib/"]
 fs_permissions = [
     { access = "read", path = "./config" },
     { access = "read-write", path = "./deployments" },
+    { access = "read-write", path = "./proposals" },
 ]
 remappings = [
     "@chainlink/contracts/=lib/chainlink-evm/contracts/",

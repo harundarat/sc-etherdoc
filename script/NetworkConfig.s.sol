@@ -11,6 +11,11 @@ abstract contract NetworkConfigScript is Script {
         NATIVE
     }
 
+    enum GovernanceMode {
+        DIRECT,
+        MULTISIG
+    }
+
     struct NetworkConfig {
         string name;
         uint256 chainId;
@@ -23,6 +28,8 @@ abstract contract NetworkConfigScript is Script {
         address receiver;
         uint32 gasLimit;
         FeeMode feeMode;
+        GovernanceMode governanceMode;
+        bool production;
         uint64 directoryVerifiedAt;
     }
 
@@ -32,9 +39,17 @@ abstract contract NetworkConfigScript is Script {
     error RemoteContractCodeMissing(string network, string contractRole, address account);
     error DestinationChainUnsupported(string sourceNetwork, string destinationNetwork, uint64 chainSelector);
     error DeploymentAddressMissing(string network, string contractRole);
+    error DeploymentDependencyMismatch(
+        string network, string contractRole, string dependency, address expected, address actual
+    );
     error UnsupportedFeeMode(string network, FeeMode feeMode);
+    error UnsafeProductionGovernance(string network, GovernanceMode governanceMode);
+    error MultisigGovernanceCodeMissing(string network, address governance);
+    error DirectGovernanceRequired(string network, GovernanceMode governanceMode);
+    error MultisigGovernanceRequired(string network, GovernanceMode governanceMode);
 
     function _loadNetwork(string memory _networkName) internal view returns (NetworkConfig memory config) {
+        _validateNetworkName(_networkName);
         string memory json = vm.readFile(_networkConfigPath());
         string memory root = string.concat(".networks.", _networkName);
 
@@ -67,6 +82,10 @@ abstract contract NetworkConfigScript is Script {
             // forge-lint: disable-next-line(unsafe-typecast)
             gasLimit: uint32(gasLimit),
             feeMode: _parseFeeMode(_networkName, vm.parseJsonString(json, string.concat(root, ".feeMode"))),
+            governanceMode: _parseGovernanceMode(
+                _networkName, vm.parseJsonString(json, string.concat(root, ".governanceMode"))
+            ),
+            production: vm.parseJsonBool(json, string.concat(root, ".production")),
             // Values above uint64 are rejected before constructing the config.
             // forge-lint: disable-next-line(unsafe-typecast)
             directoryVerifiedAt: uint64(directoryVerifiedAt)
@@ -127,6 +146,9 @@ abstract contract NetworkConfigScript is Script {
         if (_network.directoryVerifiedAt == 0) {
             revert InvalidNetworkConfig(_network.name, "directoryVerifiedAt");
         }
+        if (_network.production && _network.governanceMode != GovernanceMode.MULTISIG) {
+            revert UnsafeProductionGovernance(_network.name, _network.governanceMode);
+        }
     }
 
     function _requireDeployment(address _account, string memory _network, string memory _contractRole) internal pure {
@@ -147,8 +169,7 @@ abstract contract NetworkConfigScript is Script {
     function _requireRemoteCode(NetworkConfig memory _network, string memory _contractRole, address _account) internal {
         _requireDeployment(_account, _network.name, _contractRole);
         string memory params = string.concat("[\"", vm.toString(_account), "\",\"latest\"]");
-        bytes memory response = vm.rpc(_network.rpcAlias, "eth_getCode", params);
-        bytes memory runtimeCode = abi.decode(response, (bytes));
+        bytes memory runtimeCode = vm.rpc(_network.rpcAlias, "eth_getCode", params);
         if (runtimeCode.length == 0) {
             revert RemoteContractCodeMissing(_network.name, _contractRole, _account);
         }
@@ -163,6 +184,71 @@ abstract contract NetworkConfigScript is Script {
         vm.serializeAddress(objectKey, "sender", _sender);
         string memory json = vm.serializeAddress(objectKey, "receiver", _receiver);
         vm.writeJson(json, _deploymentPath(_networkName));
+    }
+
+    function _requireDirectGovernance(NetworkConfig memory _network) internal pure {
+        if (_network.governanceMode != GovernanceMode.DIRECT) {
+            revert DirectGovernanceRequired(_network.name, _network.governanceMode);
+        }
+    }
+
+    function _validateDeploymentGovernance(NetworkConfig memory _network, address _governance) internal view {
+        if (_network.governanceMode == GovernanceMode.MULTISIG && _governance.code.length == 0) {
+            revert MultisigGovernanceCodeMissing(_network.name, _governance);
+        }
+    }
+
+    function _persistMultisigProposal(
+        NetworkConfig memory _network,
+        address _governance,
+        address _target,
+        bytes memory _data,
+        string memory _proposalName,
+        string memory _description
+    ) internal returns (string memory path, bool written) {
+        if (_network.governanceMode != GovernanceMode.MULTISIG) {
+            revert MultisigGovernanceRequired(_network.name, _network.governanceMode);
+        }
+        if (_governance.code.length == 0) {
+            revert MultisigGovernanceCodeMissing(_network.name, _governance);
+        }
+
+        string memory proposalDirectory =
+            string.concat(vm.envOr("PROPOSAL_DIR", string("proposals")), "/", _network.name);
+        vm.createDir(proposalDirectory, true);
+        path = string.concat(proposalDirectory, "/", _proposalName, ".json");
+
+        if (vm.isFile(path)) {
+            string memory existing = vm.readFile(path);
+            bool sameProposal = vm.parseJsonAddress(existing, ".meta.createdFromSafeAddress") == _governance
+                && vm.parseJsonAddress(existing, ".transactions[0].to") == _target
+                && keccak256(vm.parseJsonBytes(existing, ".transactions[0].data")) == keccak256(_data)
+                && keccak256(bytes(vm.parseJsonString(existing, ".chainId")))
+                    == keccak256(bytes(vm.toString(_network.chainId)));
+            if (sameProposal) {
+                return (path, false);
+            }
+        }
+
+        string memory json = string.concat(
+            '{"version":"1.0","chainId":"',
+            vm.toString(_network.chainId),
+            '","createdAt":',
+            vm.toString(vm.unixTime()),
+            ',"meta":{"name":"',
+            _proposalName,
+            '","description":"',
+            _description,
+            '","txBuilderVersion":"1.18.0","createdFromSafeAddress":"',
+            vm.toString(_governance),
+            '","createdFromOwnerAddress":""},"transactions":[{"to":"',
+            vm.toString(_target),
+            '","value":"0","data":"',
+            vm.toString(_data),
+            '","contractMethod":null,"contractInputsValues":null}]}'
+        );
+        vm.writeJson(json, path);
+        return (path, true);
     }
 
     function _networkConfigPath() internal view returns (string memory) {
@@ -183,5 +269,35 @@ abstract contract NetworkConfigScript is Script {
             return FeeMode.NATIVE;
         }
         revert InvalidNetworkConfig(_networkName, "feeMode");
+    }
+
+    function _parseGovernanceMode(string memory _networkName, string memory _governanceMode)
+        private
+        pure
+        returns (GovernanceMode)
+    {
+        bytes32 governanceModeHash = keccak256(bytes(_governanceMode));
+        if (governanceModeHash == keccak256("DIRECT")) {
+            return GovernanceMode.DIRECT;
+        }
+        if (governanceModeHash == keccak256("MULTISIG")) {
+            return GovernanceMode.MULTISIG;
+        }
+        revert InvalidNetworkConfig(_networkName, "governanceMode");
+    }
+
+    function _validateNetworkName(string memory _networkName) private pure {
+        bytes memory name = bytes(_networkName);
+        if (name.length == 0 || name.length > 64) {
+            revert InvalidNetworkConfig(_networkName, "name");
+        }
+        for (uint256 index; index < name.length; ++index) {
+            bytes1 character = name[index];
+            bool valid = (character >= 0x30 && character <= 0x39) || (character >= 0x41 && character <= 0x5A)
+                || (character >= 0x61 && character <= 0x7A) || character == 0x2D || character == 0x5F;
+            if (!valid) {
+                revert InvalidNetworkConfig(_networkName, "name");
+            }
+        }
     }
 }

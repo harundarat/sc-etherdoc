@@ -9,6 +9,8 @@
       "rpcAlias": "local",
       "gasLimit": 500000,
       "feeMode": "LINK",
+      "governanceMode": "DIRECT",
+      "production": false,
       "directoryVerifiedAt": 1
     }
   }

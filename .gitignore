@@ -13,6 +13,7 @@ broadcast
 
 # Generated deployment address books
 deployments/**/*.json
+proposals/
 
 # VSCode Extension
 .wake

@@ -15,15 +15,44 @@ contract EtherdocReceiverScript is NetworkConfigScript {
         NetworkConfig memory network = _loadNetwork(networkName);
         _validateCurrentNetwork(network, false);
         address governance = vm.envAddress("GOVERNANCE");
+        _validateDeploymentGovernance(network, governance);
         address pauser = vm.envAddress("PAUSER");
 
-        vm.startBroadcast();
-        etherdocReceiver = new EtherdocReceiver(network.router, governance, pauser);
-        vm.stopBroadcast();
+        bool deployed;
+        if (network.receiver == address(0)) {
+            vm.startBroadcast();
+            (etherdocReceiver, deployed) = _deployOrReuse(network, governance, pauser);
+            vm.stopBroadcast();
+        } else {
+            (etherdocReceiver, deployed) = _deployOrReuse(network, governance, pauser);
+        }
 
         _persistDeployment(networkName, network.sender, address(etherdocReceiver));
-        console.log("EtherdocReceiver deployed at:", address(etherdocReceiver));
+        console.log(
+            deployed ? "EtherdocReceiver deployed at:" : "EtherdocReceiver already deployed at:",
+            address(etherdocReceiver)
+        );
         console.log("Governance:", governance);
         console.log("Pauser:", pauser);
+    }
+
+    function _deployOrReuse(NetworkConfig memory _network, address _governance, address _pauser)
+        internal
+        returns (EtherdocReceiver receiver, bool deployed)
+    {
+        if (_network.receiver == address(0)) {
+            receiver = new EtherdocReceiver(_network.router, _governance, _pauser);
+            return (receiver, true);
+        }
+
+        _requireLocalCode(_network, "EtherdocReceiver", _network.receiver);
+        receiver = EtherdocReceiver(_network.receiver);
+        address actualRouter = receiver.getRouter();
+        if (actualRouter != _network.router) {
+            revert DeploymentDependencyMismatch(
+                _network.name, "EtherdocReceiver", "router", _network.router, actualRouter
+            );
+        }
+        return (receiver, false);
     }
 }
