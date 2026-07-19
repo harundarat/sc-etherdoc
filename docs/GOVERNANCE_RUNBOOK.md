@@ -44,8 +44,12 @@ Before funding or configuring a deployment:
    governance multisig. Simulate and review exact calldata before collecting signatures.
 
 The checked-in configure scripts are convenient when the broadcast signer itself is governance,
-such as a local environment. For a production contract multisig, use their validated parameters but
-submit the equivalent contract calls through the multisig transaction flow.
+such as a local environment. Every production network config must set `production: true` and
+`governanceMode: "MULTISIG"`. That combination requires the deployed owner to have bytecode and
+causes configuration and withdrawal scripts to emit Safe Transaction Builder proposals instead of
+broadcasting an EOA transaction. Import, simulate, review, and execute those proposals through the
+multisig threshold. The complete command sequence and manifest policy are in
+[DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Role rotation
 

@@ -25,6 +25,7 @@ forge test -vv
 FOUNDRY_PROFILE=ci forge test -vv
 bash script/check-coverage.sh
 bash script/ci-deployment-dry-run.sh
+bash script/test-deployment-workflow.sh
 ```
 
 Invariant tests are excluded only from the coverage command because their paths are already covered
@@ -34,6 +35,11 @@ Coverage is scoped to `src/`, not vendored dependencies, scripts, mocks, or test
 tracks registration, fee-protected dispatch, and local end-to-end delivery with a 5% tolerance.
 Contract size budgets are deliberately below the EIP-170/EIP-3860 limits and require explicit review
 when raised.
+
+The no-broadcast deployment dry-run checks both constructors without changing the Anvil deployer
+nonce. The deployment workflow test then broadcasts locally, validates receipt-backed manifests,
+and proves that deploy, remote configuration, funding, and withdrawal reruns are no-ops by comparing
+the deployer nonce before and after each rerun.
 
 PR CI also runs Slither 0.11.5 through a fully pinned Slither action. Findings from `lib/`, scripts,
 and tests are filtered while dependencies remain available for compilation. Medium-or-higher

@@ -625,7 +625,7 @@ Target awal: 100% branch untuk contract milik Etherdoc, bukan untuk dependency.
   mengelompokkan field enum pada struct bertimestamp. Runtime/initcode aktual adalah
   18.880/20.826 byte untuk sender dan 11.522/12.321 byte untuk receiver.
 
-### [ ] P2-03 Buat deployment/configuration scripts yang idempotent
+### [x] P2-03 Buat deployment/configuration scripts yang idempotent
 
 **TODO:**
 
@@ -636,6 +636,42 @@ Target awal: 100% branch untuk contract milik Etherdoc, bukan untuk dependency.
   constructor args, dan timestamp.
 - Tambahkan contract verification command.
 - Gunakan multisig/timelock untuk production config changes.
+
+**Implementasi (2026-07-19):**
+
+- Deployment tetap dipisah per role melalui `EtherdocSenderScript` dan `EtherdocReceiverScript`.
+  Keduanya membaca address book, memverifikasi bytecode serta dependency Router/LINK melalui getter
+  on-chain, lalu memakai kembali deployment yang cocok. Address tanpa code atau dependency berbeda
+  gagal eksplisit dan tidak memicu deployment pengganti.
+- Dua configurator lama digabung menjadi satu `ConfigureEtherdocRemotesScript` dengan target
+  `SENDER`/`RECEIVER`. Script membandingkan selector, receiver, gas limit, allowlist, dan trusted
+  remote pair sebelum write. `ManageEtherdocTreasuryScript` memakai target saldo LINK untuk funding
+  dan retained balance untuk withdrawal, sehingga seluruh rerun menjadi no-op berbasis desired
+  state.
+- Network JSON sekarang mewajibkan `governanceMode` dan `production`. Kombinasi production +
+  `DIRECT` ditolak, sedangkan mode `MULTISIG` juga mewajibkan `GOVERNANCE` memiliki bytecode.
+  Configure/withdraw pada mode tersebut menghasilkan JSON Safe Transaction Builder yang dapat
+  direview dan dieksekusi threshold multisig; proposal identik dipertahankan tanpa rewrite.
+- `script/deploy-contract.sh` menolak source dirty secara default, merekonsiliasi address dengan
+  broadcast receipt dan runtime code, lalu menyimpan manifest per role berisi chain ID/selector,
+  address, transaction hash, block/timestamp, deployer, runtime code hash, git commit, compiler/EVM/
+  optimizer, serta constructor args decoded dan ABI-encoded. Existing address tanpa manifest ditolak
+  agar history transaksi tidak direka ulang.
+- `script/verify-contract.sh` merakit `forge verify-contract --watch` dari manifest, termasuk exact
+  compiler setting, constructor args, dan creation transaction hash. Mode `VERIFY_DRY_RUN=1`
+  memvalidasi chain/code dan mencetak command tanpa mengirim request verifier.
+- Preflight remote `eth_getCode` diperbaiki setelah workflow nyata menemukan double ABI-decode:
+  `vm.rpc` sudah mengembalikan runtime bytecode sebagai `bytes`. `docs/DEPLOYMENT.md`, governance
+  runbook, README, dan `.env-example` sekarang mendokumentasikan keseluruhan alur.
+- Unit test baru mencakup reuse/mismatch deployment, config drift/no-op, treasury target arithmetic,
+  nama network aman, production governance, dan proposal Safe yang idempotent. Workflow Anvil
+  membroadcast kedua role, configure kedua endpoint lane, fund, withdraw, dan kemudian membuktikan semua rerun
+  tidak mengubah nonce. Manifest serta dry verification command juga divalidasi di CI.
+- Verifikasi final lulus: fmt/lint, Slither 0.11.5 medium gate, size/gas gate, dry-run tanpa broadcast,
+  dan workflow idempotent. Suite default/CI lulus 102 test, 0 gagal, 2 optional fork skip; CI
+  menjalankan 1.024 fuzz case/property dan 256.000 call/invariant. Coverage tetap 100% untuk 414
+  line, 418 statement, 73 branch, dan 74 function. Runtime/initcode akhir adalah 18.988/20.948 byte
+  untuk sender dan 11.522/12.321 byte untuk receiver.
 
 ### [ ] P2-04 Tambahkan events dan query yang dapat diindeks
 

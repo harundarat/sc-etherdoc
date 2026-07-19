@@ -186,6 +186,7 @@ bash script/check-coverage.sh
 bash script/check-contract-sizes.sh
 bash script/check-gas-snapshot.sh
 bash script/ci-deployment-dry-run.sh
+bash script/test-deployment-workflow.sh
 ```
 
 Chainlink versions, exact commits, remapping rationale, and the upgrade gate are documented in the
@@ -213,38 +214,39 @@ before a production-like deployment.
 Copy `.env-example` to `.env`, provide both RPC URLs, and load it into the shell. Deploy and
 configure are deliberately separate. Set `GOVERNANCE` to the production multisig plus explicit
 `INITIAL_ISSUER`, `OPERATOR`, and `PAUSER` addresses before source deployment; receiver deployment
-uses `GOVERNANCE` and `PAUSER`:
+uses `GOVERNANCE` and `PAUSER`. Use encrypted Foundry accounts or a hardware wallet, never a
+plaintext production key:
 
 ```shell
 set -a
 source .env
 set +a
 
-# Destination deployment
-NETWORK=inkSepolia forge script script/EtherdocReceiverScript.s.sol \
-  --target-contract EtherdocReceiverScript \
-  --rpc-url ink_sepolia --broadcast
+# Destination deployment plus receipt-backed manifest
+NETWORK=inkSepolia RPC_URL="$INK_SEPOLIA_RPC_URL" \
+  bash script/deploy-contract.sh receiver --account deployer
 
-# Source deployment
-NETWORK=mantleSepolia forge script script/EtherdocSenderScript.s.sol \
-  --target-contract EtherdocSenderScript \
-  --rpc-url mantle_sepolia --broadcast
+# Source deployment plus receipt-backed manifest
+NETWORK=mantleSepolia RPC_URL="$MANTLE_SEPOLIA_RPC_URL" \
+  bash script/deploy-contract.sh sender --account deployer
 
 # Configure the destination to accept the source deployment
-SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia \
-  forge script script/ConfigureEtherdocReceiver.s.sol \
-  --target-contract ConfigureEtherdocReceiverScript \
-  --rpc-url ink_sepolia --broadcast
+SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia CONFIGURE_TARGET=RECEIVER \
+  forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
+    --rpc-url ink_sepolia --broadcast --account governance
 
 # Configure the source lane and destination receiver
-SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia \
-  forge script script/ConfigureEtherdocSender.s.sol \
-  --target-contract ConfigureEtherdocSenderScript \
-  --rpc-url mantle_sepolia --broadcast
+SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia CONFIGURE_TARGET=SENDER \
+  forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
+    --rpc-url mantle_sepolia --broadcast --account governance
 ```
 
-Successful broadcast runs write generated address books under `deployments/testnet/`; dry-runs do
-not write deployment addresses. The configure scripts require those artifacts.
+Successful deployment runs write generated address books and role-specific manifests under
+`deployments/testnet/`. The manifests reconcile chain ID/selector, address, creation transaction,
+block timestamp, runtime code hash, Git commit, compiler settings, and constructor arguments. A
+rerun verifies and reuses the existing deployment without sending a transaction. Remote
+configuration, target-balance funding, and retention-based withdrawal are also no-ops when their
+desired state already holds.
 
 Every deploy/configure command performs preflight validation before broadcasting:
 
@@ -252,13 +254,18 @@ Every deploy/configure command performs preflight validation before broadcasting
 - the local Router, LINK token when required, and Etherdoc deployment must have bytecode;
 - the source Router must report the destination selector as supported;
 - remote Router, sender, and receiver bytecode is checked through the configured remote RPC alias;
-- the configured destination gas limit must match the sender contract;
+- the configured destination gas limit, receiver, and trust pair are compared before any write;
 - missing deployment artifacts and unsupported fee modes fail with explicit custom errors.
 
 The current sender pays fees in LINK. Setting `feeMode` to `NATIVE` is rejected until native fee
-payment is implemented in the contract. The configure commands can broadcast directly only when
-their signer is governance. For production multisig ownership, review the validated parameters and
-execute the equivalent `configureTrustedRemote` and `configureRemote` calldata through the multisig.
+payment is implemented in the contract. Production configs must use
+`production: true` with `governanceMode: "MULTISIG"`; direct production governance is rejected and
+configuration/withdrawal commands emit idempotent Safe Transaction Builder proposals rather than
+impersonating the contract owner. Verification is available through
+`script/verify-contract.sh sender|receiver`.
+
+The complete operational commands, manifest schema, treasury targets, Safe proposal flow, and
+verification options are documented in [Deployment and configuration](docs/DEPLOYMENT.md).
 
 The optional fork tests verify Router/LINK bytecode, lane support, and live V3 quotes in both
 directions:
