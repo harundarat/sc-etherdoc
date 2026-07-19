@@ -78,6 +78,8 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
     error InvalidGasLimit(uint256 gasLimit);
     error DestinationChainNotAllowlisted(uint64 destinationChainSelector);
     error FeeExceedsMaximum(uint256 calculatedFees, uint256 maximumFee);
+    error InvalidRouter(address router);
+    error InvalidLinkToken(address linkToken);
     error InvalidTokenAddress();
     error InvalidWithdrawalRecipient();
     error RegistrationIsPaused();
@@ -150,6 +152,12 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
         address _initialOperator,
         address _initialPauser
     ) EtherdocGovernance(_governance) EIP712("Etherdoc", "2") {
+        if (_router.code.length == 0) {
+            revert InvalidRouter(_router);
+        }
+        if (_link.code.length == 0) {
+            revert InvalidLinkToken(_link);
+        }
         i_router = IRouterClient(_router);
         i_linkToken = IERC20(_link);
         if (_initialIssuer == address(0)) {

@@ -79,6 +79,9 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
         CCIPReceiver(_router)
         EtherdocGovernance(_governance)
     {
+        if (_router.code.length == 0) {
+            revert InvalidRouter(_router);
+        }
         _setRole(PAUSER_ROLE, _initialPauser, true);
     }
 
