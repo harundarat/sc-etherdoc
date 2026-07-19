@@ -131,8 +131,8 @@ library EtherdocTypes {
         bytes memory encodedCID = new bytes(CANONICAL_CID_LENGTH);
         encodedCID[0] = "b";
 
-        uint256 accumulator;
-        uint256 bitCount;
+        uint256 accumulator = 0;
+        uint256 bitCount = 0;
         uint256 outputIndex = 1;
         for (uint256 i; i < binaryCID.length; i++) {
             accumulator = (accumulator << 8) | uint8(binaryCID[i]);

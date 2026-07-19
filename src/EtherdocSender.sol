@@ -375,10 +375,13 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
         Client.EVM2AnyMessage memory evm2AnyMessage = _buildMessage(_remote, _document, _operation);
 
         fees = i_router.getFee(_destinationChainSelector, evm2AnyMessage);
+        // Slither taints the Router fee through fixed-width payload fields that contain timestamps.
+        // slither-disable-next-line timestamp
         if (fees > _maximumFee) {
             revert FeeExceedsMaximum(fees, _maximumFee);
         }
         uint256 linkBalance = i_linkToken.balanceOf(address(this));
+        // slither-disable-next-line timestamp
         if (fees > linkBalance) {
             revert NotEnoughBalance(linkBalance, fees);
         }
@@ -497,6 +500,8 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
         }
 
         EtherdocTypes.DocumentRecord memory document = s_documents[_documentId];
+        // Slither 0.11.5 over-taints non-time fields after copying the timestamp-bearing document.
+        // slither-disable-next-line timestamp
         if (document.status == EtherdocTypes.DocumentStatus.UNKNOWN) {
             revert DocumentNotRegistered(_documentId);
         }
@@ -555,10 +560,14 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
     }
 
     function isDocumentRegistered(bytes32 _documentId) external view returns (bool) {
+        // Slither 0.11.5 over-taints fields read from the timestamp-bearing document.
+        // slither-disable-next-line timestamp
         return s_documents[_documentId].status != EtherdocTypes.DocumentStatus.UNKNOWN;
     }
 
     function isDocumentActive(bytes32 _documentId) external view returns (bool) {
+        // Slither 0.11.5 over-taints fields read from the timestamp-bearing document.
+        // slither-disable-next-line timestamp
         return s_documents[_documentId].status == EtherdocTypes.DocumentStatus.ACTIVE;
     }
 
@@ -588,7 +597,10 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
         returns (EtherdocTypes.DocumentRecord memory document, bool integrityMatches, bool isActive)
     {
         document = s_documents[_documentId];
+        // Slither 0.11.5 over-taints non-time fields after copying the timestamp-bearing document.
+        // slither-disable-next-line timestamp
         integrityMatches = document.contentDigest == _contentDigest && document.documentId == _documentId;
+        // slither-disable-next-line timestamp
         isActive = document.status == EtherdocTypes.DocumentStatus.ACTIVE;
     }
 
@@ -750,11 +762,13 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
         bytes32 _structHash,
         bytes calldata _signature
     ) private {
+        // slither-disable-start timestamp
         // Signature expiry intentionally follows chain time; small validator skew does not grant issuer authority.
         // forge-lint: disable-next-line(block-timestamp)
         if (_deadline < block.timestamp) {
             revert SignatureExpired(_deadline);
         }
+        // slither-disable-end timestamp
         address recoveredSigner = ECDSA.recover(_hashTypedDataV4(_structHash), _signature);
         if (recoveredSigner != _issuer) {
             revert InvalidIssuerSignature(_issuer, recoveredSigner);

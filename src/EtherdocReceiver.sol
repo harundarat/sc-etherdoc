@@ -223,10 +223,14 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
     }
 
     function isDocumentReceived(bytes32 _documentId) external view returns (bool) {
+        // Slither 0.11.5 over-taints fields read from this timestamp-bearing record.
+        // slither-disable-next-line timestamp
         return s_receipts[_documentId].status == ReceiptStatus.RECEIVED;
     }
 
     function isDocumentActive(bytes32 _documentId) external view returns (bool) {
+        // Slither 0.11.5 over-taints fields read from the timestamp-bearing document.
+        // slither-disable-next-line timestamp
         return s_receipts[_documentId].document.status == EtherdocTypes.DocumentStatus.ACTIVE;
     }
 
@@ -236,7 +240,10 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
         returns (EtherdocTypes.DocumentRecord memory document, bool integrityMatches, bool isActive)
     {
         document = s_receipts[_documentId].document;
+        // Slither 0.11.5 over-taints non-time fields after copying the timestamp-bearing document.
+        // slither-disable-next-line timestamp
         integrityMatches = document.contentDigest == _contentDigest && document.documentId == _documentId;
+        // slither-disable-next-line timestamp
         isActive = document.status == EtherdocTypes.DocumentStatus.ACTIVE;
     }
 
