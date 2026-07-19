@@ -1,0 +1,43 @@
+name: Testnet E2E
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testnet-e2e
+  cancel-in-progress: false
+
+jobs:
+  mantle-to-ink:
+    if: ${{ vars.CCIP_E2E_ENABLED == 'true' }}
+    name: Mantle Sepolia to Ink Sepolia
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: testnet-e2e
+    env:
+      SOURCE_RPC_URL: ${{ secrets.MANTLE_SEPOLIA_RPC_URL }}
+      DESTINATION_RPC_URL: ${{ secrets.INK_SEPOLIA_RPC_URL }}
+      E2E_PRIVATE_KEY: ${{ secrets.CCIP_E2E_PRIVATE_KEY }}
+      ETHERDOC_SENDER: ${{ secrets.MANTLE_SEPOLIA_SENDER }}
+      ETHERDOC_RECEIVER: ${{ secrets.INK_SEPOLIA_RECEIVER }}
+      SOURCE_CHAIN_SELECTOR: "8236463271206331221"
+      DESTINATION_CHAIN_SELECTOR: "9763904284804119144"
+      E2E_TIMEOUT_SECONDS: "2700"
+      E2E_POLL_SECONDS: "30"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1.9.0
+        with:
+          version: v1.7.1
+
+      - name: Register, dispatch, and await destination receipt
+        run: bash script/testnet-e2e.sh
