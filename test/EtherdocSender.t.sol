@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ExtraArgsCodec} from "@chainlink/contracts-ccip/contracts/libraries/ExtraArgsCodec.sol";
 import {FinalityCodec} from "@chainlink/contracts-ccip/contracts/libraries/FinalityCodec.sol";
 import {SafeERC20} from "@openzeppelin/contracts@5.3.0/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts@5.3.0/utils/ReentrancyGuard.sol";
 import {EtherdocGovernance} from "../src/EtherdocGovernance.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
@@ -155,6 +156,21 @@ contract EtherdocSenderTest is Test {
         assertEq(s_router.lastCCVCount(DESTINATION_B), 0);
         assertEq(s_router.lastExecutor(DESTINATION_A), address(0));
         assertEq(s_router.lastExecutor(DESTINATION_B), address(0));
+    }
+
+    function test_dispatchRejectsRouterReentryEvenWhenRouterHasOperatorRole() external {
+        s_sender.setOperator(address(s_router), true);
+        s_router.configureReentry(
+            address(s_sender), abi.encodeCall(s_sender.dispatchDocument, (s_documentId, DESTINATION_A, s_router.FEE()))
+        );
+
+        bytes32 messageId = s_sender.dispatchDocument(s_documentId, DESTINATION_A, s_router.FEE());
+        (bool reentrySucceeded, bytes memory returnData) = s_router.lastReentryResult();
+
+        assertNotEq(messageId, bytes32(0));
+        assertFalse(reentrySucceeded);
+        assertEq(returnData, abi.encodeWithSelector(ReentrancyGuard.ReentrancyGuardReentrantCall.selector));
+        assertEq(s_sender.getDispatch(s_documentId, DESTINATION_A).messageId, messageId);
     }
 
     function test_onlyOperatorCanDispatch() external {

@@ -9,10 +9,11 @@ import {IERC20} from "@openzeppelin/contracts@5.3.0/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts@5.3.0/token/ERC20/utils/SafeERC20.sol";
 import {EIP712} from "@openzeppelin/contracts@5.3.0/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts@5.3.0/utils/cryptography/ECDSA.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts@5.3.0/utils/ReentrancyGuard.sol";
 import {EtherdocGovernance} from "./EtherdocGovernance.sol";
 import {EtherdocTypes} from "./EtherdocTypes.sol";
 
-contract EtherdocSender is EtherdocGovernance, EIP712 {
+contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     bytes32 public constant REGISTER_DOCUMENT_TYPEHASH = keccak256(
@@ -306,6 +307,7 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         external
         onlyRole(OPERATOR_ROLE)
         whenDispatchNotPaused
+        nonReentrant
         returns (bytes32 messageId)
     {
         RemoteConfig memory remote = s_remotes[_destinationChainSelector];

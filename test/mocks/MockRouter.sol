@@ -19,6 +19,10 @@ contract MockRouter is IRouterClient {
     mapping(uint64 destinationChainSelector => bytes4 finalityConfig) private s_lastFinalityConfigs;
     mapping(uint64 destinationChainSelector => uint256 ccvCount) private s_lastCCVCounts;
     mapping(uint64 destinationChainSelector => address executor) private s_lastExecutors;
+    address private s_reentryTarget;
+    bytes private s_reentryCalldata;
+    bool private s_lastReentrySucceeded;
+    bytes private s_lastReentryReturnData;
 
     function setLaneFailure(uint64 _destinationChainSelector, bool _shouldFail) external {
         s_failingLanes[_destinationChainSelector] = _shouldFail;
@@ -30,6 +34,11 @@ contract MockRouter is IRouterClient {
 
     function setFee(uint256 _fee) external {
         s_fee = _fee;
+    }
+
+    function configureReentry(address _target, bytes calldata _calldata) external {
+        s_reentryTarget = _target;
+        s_reentryCalldata = _calldata;
     }
 
     function isChainSupported(uint64) external pure returns (bool supported) {
@@ -64,6 +73,13 @@ contract MockRouter is IRouterClient {
         s_lastCCVCounts[_destinationChainSelector] = extraArgs.ccvs.length;
         s_lastExecutors[_destinationChainSelector] = extraArgs.executor;
 
+        if (s_reentryTarget != address(0)) {
+            address target = s_reentryTarget;
+            bytes memory callData = s_reentryCalldata;
+            s_reentryTarget = address(0);
+            (s_lastReentrySucceeded, s_lastReentryReturnData) = target.call(callData);
+        }
+
         s_nonce++;
         return keccak256(abi.encode(_destinationChainSelector, _message.receiver, _message.data, s_nonce));
     }
@@ -86,5 +102,9 @@ contract MockRouter is IRouterClient {
 
     function lastExecutor(uint64 _destinationChainSelector) external view returns (address) {
         return s_lastExecutors[_destinationChainSelector];
+    }
+
+    function lastReentryResult() external view returns (bool succeeded, bytes memory returnData) {
+        return (s_lastReentrySucceeded, s_lastReentryReturnData);
     }
 }
