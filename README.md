@@ -148,11 +148,21 @@ rotation, and recovery policy.
 
 ## Development
 
+Clone with recursive submodules, or initialize them before building an existing checkout:
+
+```shell
+git submodule sync --recursive
+git submodule update --init --recursive
+```
+
 ```shell
 forge build
 forge test
 forge fmt --check
 ```
+
+Chainlink versions, exact commits, remapping rationale, and the upgrade gate are documented in the
+[dependency policy](docs/DEPENDENCY_POLICY.md).
 
 ## Network configuration and deployment
 
