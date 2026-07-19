@@ -20,6 +20,20 @@ Event receiver tidak dapat menjadi failure signal karena seluruh event ikut di-r
 yang persisten adalah execution state dan return data milik CCIP. Custom error Etherdoc pada return
 data menjelaskan kegagalan aplikasi.
 
+## Model eksekusi CCIP 2.0
+
+Etherdoc mengirim ExtraArgs V3 dengan full finality, CommitteeVerifier default, dan executor default.
+FTF, custom CCV, dan custom executor tidak diaktifkan. Executor CCIP 2.0 bersifat permissionless:
+executor default menyediakan jalur otomatis, tetapi siapa pun tetap dapat mengeksekusi pesan yang
+sudah terverifikasi. Etherdoc tidak menggunakan `NO_EXECUTION_TAG`, karena tag tersebut hanya
+menonaktifkan pembayaran/otomasi executor dan bukan jaminan bahwa pesan tidak dapat dieksekusi.
+
+Kebijakan receiver dapat diaudit melalui inherited
+`getCCVsAndFinalityConfig(sourceChainSelector, sender)`: dua daftar CCV kosong dan threshold nol
+memilih default CCV, sedangkan `WAIT_FOR_FINALITY_FLAG` berarti receiver hanya menerima pesan
+full-finality. Recovery manual tidak boleh digunakan untuk melewati verifikasi CCV, finality,
+trusted-remote, atau validasi payload aplikasi.
+
 ## Monitoring
 
 Indexer atau alerting service harus:
@@ -72,7 +86,8 @@ revert. Transaction receipt dan revert data adalah failure evidence.
    - lane/config pause: pastikan incident sudah ditutup sebelum membuka lane;
    - payload/provenance/state invalid: jangan bypass validasi. Payload CCIP immutable; eskalasi
      sebagai defect atau pesan berbahaya.
-4. Setelah remediation, jalankan manual execution pada destination:
+4. Setelah remediation dan verifikasi CCV/finality selesai, jalankan manual execution pada
+   destination:
 
 ```shell
 npx @chainlink/ccip-cli manual-exec "$MESSAGE_ID" \

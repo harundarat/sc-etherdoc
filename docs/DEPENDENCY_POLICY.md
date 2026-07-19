@@ -1,8 +1,8 @@
 # Dependency Policy
 
-Etherdoc pins Solidity dependencies by full Git commit through submodules. A release tag or package
-version is recorded for review, but the Git commit is the reproducible source of truth. Clone and
-update the repository recursively:
+Etherdoc pins Solidity dependencies by full Git commit through root submodules. A release tag or
+package version is recorded for review, but the Git commit is the reproducible source of truth.
+Clone and update the repository recursively:
 
 ```shell
 git clone --recurse-submodules <repository-url>
@@ -10,48 +10,67 @@ git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
-## Approved compatibility matrix
-
-The Chainlink matrix follows the exact production dependencies declared by
-[`@chainlink/local` 0.2.9](https://github.com/smartcontractkit/chainlink-local/releases/tag/v0.2.9):
+## Approved CCIP 2.0 matrix
 
 | Dependency | Version/tag | Full commit |
 |---|---|---|
-| `@chainlink/local` | `v0.2.9` | `f8c0efe8685660dac07e08f4558f1b578ae991aa` |
+| `@chainlink/contracts-ccip` | `contracts-ccip-v2.0.0` | `c2c125c27f056db2e98d21501922b6eff5750f36` |
 | `@chainlink/contracts` | `contracts-v1.5.0` | `86aa5a1d34b20eda8d18fe6eb0e4882948e545ba` |
-| `@chainlink/contracts-ccip` | `contracts-ccip-v1.6.2` | `0e3e0fc5c0f70f0d50dca66b139142ddf3009294` |
+| `@openzeppelin/contracts` | `v5.3.0` | `e4f70216d759d8e6a64144a9e1f7bbeed78e7079` |
 | `forge-std` | `v1.9.7` | `77041d2ce690e692d6e03cc812b57d1ddaa4d505` |
 
-Chainlink Local declares Contracts `1.5.0` and CCIP `1.6.2` as exact dependencies and pins those
-repositories as nested submodules. Root remappings therefore use the nested copies as the single
-source of Chainlink contracts. The former vendored `chainlink-brownie-contracts` 1.3.0 tree and
-duplicate root CCIP submodule are intentionally absent.
+Chainlink CCIP, Chainlink Contracts, OpenZeppelin, and forge-std are direct root submodules.
+Chainlink Local and its nested CCIP 1.6.2 checkout are intentionally absent. Root remappings resolve
+each import prefix to exactly one checkout:
 
-The root and Chainlink Local each retain a `forge-std` checkout because both are direct development
-dependencies. They resolve to the same full commit, while the root `forge-std/` import remapping is
-unambiguous. OpenZeppelin imports use the versioned `@openzeppelin/contracts@5.0.2` alias supplied
-by Chainlink Local instead of relying on a removed Chainlink vendor path.
+```text
+@chainlink/contracts/=lib/chainlink-evm/contracts/
+@chainlink/contracts-ccip/=lib/chainlink-ccip/chains/evm/
+@openzeppelin/contracts@5.3.0/=lib/openzeppelin-contracts/contracts/
+```
 
-CCIP 2.x is not part of this matrix. It is a separate migration because its protocol and contract
-interfaces require dedicated compatibility, deployment, and in-flight-message analysis.
+Application code uses the versioned OpenZeppelin 5.3.0 prefix. Tests use a small local ERC-20 fee
+token instead of Chainlink Local so production protocol types come only from the pinned CCIP 2.0
+repository. `test/Integration.t.sol` supplies an immediate-delivery Router harness that validates
+ExtraArgs V3, full finality, the default CCV/executor selection, LINK fee collection, and
+destination delivery.
+
+This is a clean cutover. Etherdoc has no mainnet deployment, persisted contract state, or pending
+message that needs v1 compatibility. Old deployment artifacts and CCIP 1.x messages are not
+accepted as migration inputs.
 
 ## Update requirements
 
 Dependency changes must be submitted for review and must not auto-merge. A change must:
 
-1. select a published compatibility matrix and pin every submodule to a full commit;
-2. update this table and the explicit remappings without adding competing copies;
-3. inspect release notes and diffs for interface, storage, event, fee, and message-format changes;
-4. run `forge fmt --check`, `forge build --sizes`, and the complete `forge test -vv` suite;
-5. exercise `test/Integration.t.sol` so the approved Local simulator sends and receives an
-   application payload; and
-6. use a new deployment and controlled remote rotation for an incompatible CCIP or storage change.
+1. select published releases and pin every submodule to a full commit;
+2. update this table and explicit remappings without adding competing copies;
+3. inspect release notes and diffs for interface, storage, event, fee, verifier, executor, finality,
+   and message-format changes;
+4. verify each target lane and Router against the current CCIP Directory;
+5. run `forge fmt --check`, `forge build --sizes`, and the complete `forge test -vv` suite;
+6. exercise `test/Integration.t.sol` and the optional live Router fork test; and
+7. use new deployments and controlled remote rotation for any incompatible CCIP or storage change.
 
-Reviewers can compare the checked-out content identifiers with this policy using:
+Reviewers can compare checked-out content identifiers with this policy using:
 
 ```shell
-git submodule status --recursive
-git -C lib/chainlink-local show HEAD:package.json
-git -C lib/chainlink-local/lib/chainlink-evm show HEAD:contracts/package.json
-git -C lib/chainlink-local/lib/chainlink-ccip show HEAD:chains/evm/package.json
+git submodule status
+git -C lib/chainlink-ccip rev-parse HEAD
+git -C lib/chainlink-evm rev-parse HEAD
+git -C lib/openzeppelin-contracts rev-parse HEAD
+git -C lib/forge-std rev-parse HEAD
 ```
+
+CCIP 2.0 concepts and security choices for Etherdoc:
+
+- an empty CCV list selects the default CommitteeVerifier;
+- `address(0)` selects the default executor;
+- `WAIT_FOR_FINALITY_FLAG` requires full finality and does not opt into FTF;
+- the default executor is automated, while destination execution remains permissionless;
+- `NO_EXECUTION_TAG` is not used; and
+- custom CCVs, custom executors, and token transfers require a separate reviewed change.
+
+See the
+[CCIP 2.0 release](https://github.com/smartcontractkit/chainlink-ccip/releases/tag/contracts-ccip-v2.0.0)
+for the protocol-level model.

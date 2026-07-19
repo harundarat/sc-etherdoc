@@ -120,9 +120,17 @@ The receiver authenticates the source pair before decoding payload data and reco
 successfully handled CCIP `messageId`. Re-delivery of the same message and a distinct message carrying
 an equal or older document version are ignored idempotently and emit `MessageIgnored`; invalid or
 conflicting payloads revert. `isMessageProcessed(messageId)` and `getMessageDocument(messageId)`
-provide replay and indexing evidence. Out-of-order execution remains enabled, but schema v1 permits
-only version 1 `REGISTER` records followed by one version 2 terminal operation, so an older active
-record cannot overwrite a received revocation or supersession.
+provide replay and indexing evidence. ExtraArgs V3 has no v1 `allowOutOfOrderExecution` toggle.
+Etherdoc independently enforces monotonic state: schema 2 permits only version 1 `REGISTER` records
+followed by one version 2 terminal operation, so an older active record cannot overwrite a received
+revocation or supersession.
+
+Every outbound message uses CCIP 2.0 `GenericExtraArgsV3`. The callback gas limit is stored as
+`uint32` per remote. Etherdoc requests `WAIT_FOR_FINALITY_FLAG`, leaves the CCV list empty to select
+the default CommitteeVerifier, and leaves the executor at `address(0)` to select the default
+executor. Faster-than-finality (FTF), custom CCVs, custom executors, token transfers, and
+`NO_EXECUTION_TAG` are not enabled. CCIP 2.0 execution is permissionless even when the default
+executor is selected; verified messages remain manually executable.
 
 Receiver failures deliberately revert so CCIP retains the failed execution and return data for
 monitoring and manual execution. Authentication failures are never stored as valid messages. After a
@@ -168,14 +176,16 @@ Chainlink versions, exact commits, remapping rationale, and the upgrade gate are
 
 Deployment scripts do not contain network addresses or chain selectors. They load one
 `NetworkConfig` per chain from `NETWORK_CONFIG_PATH` and load generated Etherdoc addresses from
-`DEPLOYMENT_DIR/<network>.json`. The checked-in testnet example uses the Ethereum Sepolia ↔ Base
-Sepolia lane and LINK fee payment.
+`DEPLOYMENT_DIR/<network>.json`. The checked-in testnet example uses Mantle Sepolia as source and Ink
+Sepolia as destination with LINK fee payment.
 
 The lane and Router/LINK values in `config/networks/testnet.json` were last verified on
-**2026-07-18** against the official CCIP Directory:
+**2026-07-19** against the official CCIP Directory. The configured Router accepts an ExtraArgs V3
+quote for Mantle Sepolia → Ink Sepolia; the reverse Ink → Mantle lane is also listed as version
+`2.0.0`:
 
-- [Ethereum Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia)
-- [Base Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia-base-1)
+- [Mantle Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia-mantle-1)
+- [Ink Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ink-testnet-sepolia)
 
 CCIP network support can change. Recheck both Directory pages and update `directoryVerifiedAt`
 before a production-like deployment.
@@ -191,26 +201,26 @@ source .env
 set +a
 
 # Destination deployment
-NETWORK=baseSepolia forge script script/EtherdocReceiverScript.s.sol \
+NETWORK=inkSepolia forge script script/EtherdocReceiverScript.s.sol \
   --target-contract EtherdocReceiverScript \
-  --rpc-url base_sepolia --broadcast
+  --rpc-url ink_sepolia --broadcast
 
 # Source deployment
-NETWORK=ethereumSepolia forge script script/EtherdocSenderScript.s.sol \
+NETWORK=mantleSepolia forge script script/EtherdocSenderScript.s.sol \
   --target-contract EtherdocSenderScript \
-  --rpc-url ethereum_sepolia --broadcast
+  --rpc-url mantle_sepolia --broadcast
 
 # Configure the destination to accept the source deployment
-SOURCE_NETWORK=ethereumSepolia DESTINATION_NETWORK=baseSepolia \
+SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia \
   forge script script/ConfigureEtherdocReceiver.s.sol \
   --target-contract ConfigureEtherdocReceiverScript \
-  --rpc-url base_sepolia --broadcast
+  --rpc-url ink_sepolia --broadcast
 
 # Configure the source lane and destination receiver
-SOURCE_NETWORK=ethereumSepolia DESTINATION_NETWORK=baseSepolia \
+SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia \
   forge script script/ConfigureEtherdocSender.s.sol \
   --target-contract ConfigureEtherdocSenderScript \
-  --rpc-url ethereum_sepolia --broadcast
+  --rpc-url mantle_sepolia --broadcast
 ```
 
 Successful broadcast runs write generated address books under `deployments/testnet/`; dry-runs do
@@ -229,3 +239,12 @@ The current sender pays fees in LINK. Setting `feeMode` to `NATIVE` is rejected 
 payment is implemented in the contract. The configure commands can broadcast directly only when
 their signer is governance. For production multisig ownership, review the validated parameters and
 execute the equivalent `configureTrustedRemote` and `configureRemote` calldata through the multisig.
+
+The optional Mantle fork test checks `isChainSupported(Ink)` and obtains a live V3 quote:
+
+```shell
+MANTLE_SEPOLIA_RPC_URL=<rpc-url> \
+  forge test --match-contract CCIPV2MantleForkTest -vv
+```
+
+It is reported as skipped when `MANTLE_SEPOLIA_RPC_URL` is absent.

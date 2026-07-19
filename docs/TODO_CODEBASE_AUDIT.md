@@ -240,10 +240,10 @@ envelope, timestamp, operation/status, dan transisi versi.
 
 Aturan duplicate dipilih idempotent: replay `messageId` dan pesan berbeda dengan versi equal/stale
 tidak mengubah receipt, ditandai processed, dan memancarkan `MessageIgnored`. Payload invalid,
-provenance/state yang konflik, atau transisi baru setelah state terminal tetap revert. Karena
-`allowOutOfOrderExecution` dipertahankan, schema v1 membatasi `REGISTER` ke version 1 dan
-`REVOKE`/`SUPERSEDE` ke terminal version 2; test mengirim revocation lebih dulu lalu registration lama
-dan membuktikan dokumen tidak aktif kembali
+provenance/state yang konflik, atau transisi baru setelah state terminal tetap revert. ExtraArgs V3
+tidak memiliki toggle `allowOutOfOrderExecution`; schema 2 tetap membatasi `REGISTER` ke version 1
+dan `REVOKE`/`SUPERSEDE` ke terminal version 2. Test mengirim revocation lebih dulu lalu registration
+lama dan membuktikan dokumen tidak aktif kembali
 (`EtherdocLifecycleTest.test_outOfOrderOlderMessageCannotReactivateRevokedDocument`).
 
 **TODO:**
@@ -255,8 +255,8 @@ dan membuktikan dokumen tidak aktif kembali
 - Decode sender dan data sekali saja.
 - Simpan processed `messageId` untuk idempotency dan observability.
 - Putuskan aturan duplicate document: ignore idempotently atau revert secara eksplisit.
-- Jika `allowOutOfOrderExecution = true` dipertahankan, pastikan version/nonce monoton dan pesan lama
-  tidak dapat mengaktifkan kembali dokumen yang sudah revoked.
+- Pastikan version/nonce monoton dan pesan lama tidak dapat mengaktifkan kembali dokumen yang sudah
+  revoked, terlepas dari urutan eksekusi permissionless CCIP 2.0.
 
 ### [x] P1-04 Rancang recovery untuk receiver failure dan retry dispatch
 
@@ -408,9 +408,10 @@ test.
 | Solidity | pragma exact `0.8.24` | `0.8.36` | Tertinggal; upgrade bertahap dan review breaking/compiler changes |
 | Foundry | lokal `1.5.1`; CI tidak pin binary | `1.7.1` | Build lokal/CI tidak reproducible |
 | `forge-std` | commit `77041d...`, versi `1.9.7` | `1.16.2` | Dipin dengan baik tetapi tertinggal |
-| `@chainlink/contracts-ccip` | commit `0e3e0fc...`, versi `1.6.2` | `2.0.0` | Selaras dengan Local; upgrade mayor dipisahkan |
-| `@chainlink/local` | commit `f8c0efe...`, versi `0.2.9` | `0.2.9` | Exact stable release |
+| `@chainlink/contracts-ccip` | commit `c2c125c...`, versi `2.0.0` | `2.0.0` | Migrasi selesai; direct root submodule |
+| `@chainlink/local` | dihapus | `0.2.9` | Simulator 1.x dan nested CCIP 1.6.2 tidak dipakai |
 | `@chainlink/contracts` | commit `86aa5a1...`, versi `1.5.0` | `1.5.0` | Selaras dengan matrix Local |
+| `@openzeppelin/contracts` | commit `e4f7021...`, versi `5.3.0` | `5.3.0` | Direct root submodule |
 | `actions/checkout` | `@v4` | `v7.0.0` | Major lama dan hanya pin tag |
 | `foundry-toolchain` action | `@v1`, tanpa input versi Foundry | action `v1.9.0` | Action dan binary Foundry sama-sama tidak immutable |
 
@@ -439,21 +440,17 @@ Build saat ini kebetulan lulus, tetapi kombinasi ini berada di luar dependency d
 - Hindari dua copy CCIP/forge-std berbeda di root dan nested dependency bila resolusinya ambigu.
 - Catat checksums/commit dan alasan versi dalam dependency policy.
 
-**Implementasi (2026-07-19):**
+**Implementasi final (2026-07-19):**
 
-- Matrix exact dari Chainlink Local `v0.2.9` dipakai: Contracts `1.5.0` dan CCIP `1.6.2`.
-- Root sekarang memetakan kedua package Chainlink ke nested gitlink Local yang sesuai deklarasi
-  package dan dipin ke full commit; copy Brownie 1.3.0 serta submodule CCIP root dihapus.
-- Import OpenZeppelin lama yang bergantung pada vendor path Chainlink dipindah ke alias versioned
-  `@openzeppelin/contracts@5.0.2` milik matrix yang sama.
-- Root dan nested `forge-std` tetap ada sebagai direct development dependency masing-masing, tetapi
-  keduanya berada pada exact commit `77041d...` dan remapping root eksplisit sehingga tidak ambigu.
-- Versi, full commit, alasan pemilihan, prosedur verifikasi, dan update gate dicatat di
+- CCIP menjadi direct root submodule pada release 2.0.0, Contracts tetap 1.5.0, dan OpenZeppelin
+  menjadi direct root submodule 5.3.0; semuanya dipin ke full commit.
+- Chainlink Local, nested CCIP 1.6.2, dan seluruh remapping ambigu dihapus.
+- Import aplikasi menggunakan alias versioned `@openzeppelin/contracts@5.3.0`.
+- Versi, full commit, remapping, prosedur verifikasi, dan update gate dicatat di
   `docs/DEPENDENCY_POLICY.md`.
-- Regression lane aplikasi lulus melalui `Integration.t.sol`; seluruh 54 test lulus setelah clean
-  build dengan ukuran bytecode Etherdoc tidak berubah.
+- Regression lane aplikasi memakai Router harness CCIP 2.0, bukan simulator CCIP 1.x.
 
-### [ ] P1-09 Evaluasi CCIP 2.0 sebagai migration project terpisah
+### [x] P1-09 Evaluasi CCIP 2.0 sebagai migration project terpisah
 
 CCIP 2.0 adalah major release dengan konsep CCV, executor, finality, message format, dan receiver
 interface baru. Jangan mengubah dependency lalu menganggap kontrak lama setara.
@@ -465,6 +462,25 @@ interface baru. Jangan mengubah dependency lalu menganggap kontrak lama setara.
 - Tentukan backward compatibility untuk receiver v1 dan message yang masih pending.
 - Buat branch migration dan suite fork/E2E khusus.
 - Deploy kontrak baru dan lakukan remote rotation terkontrol bila storage/interface tidak kompatibel.
+
+**Implementasi (2026-07-19):**
+
+- Clean cutover dilakukan tanpa kompatibilitas deployment atau pesan lama karena Etherdoc belum
+  pernah mainnet.
+- Sender memakai `ExtraArgsCodec.GenericExtraArgsV3`: `uint32 gasLimit`,
+  `WAIT_FOR_FINALITY_FLAG`, daftar CCV kosong untuk CommitteeVerifier default, dan executor
+  `address(0)` untuk executor default. FTF, custom CCV/executor, `NO_EXECUTION_TAG`, dan token
+  transfer tidak diaktifkan.
+- Receiver memakai `CCIPReceiver` 2.0, mendukung interface receiver V1 dan V2, serta mengekspos
+  default policy melalui `getCCVsAndFinalityConfig`.
+- Router/getFee/approval/fee ceiling/ccipSend tetap dipakai melalui public Router interface yang
+  kompatibel. Replay protection, trusted remote, lifecycle, pause, dan receiver-revert/manual
+  execution tetap dipertahankan.
+- Config contoh diganti menjadi Mantle Sepolia → Ink Sepolia. Router, LINK, selector, explorer, dan
+  RPC alias diverifikasi terhadap Directory; fork test membuktikan Router Mantle mendukung Ink dan
+  menerima quote ExtraArgs V3.
+- Known-answer codec, overflow gas, V1/V2 interface, policy receiver, lifecycle, failure/retry,
+  Router harness E2E, dan optional fork coverage ditambahkan.
 
 ### [ ] P1-10 Pin compiler, EVM target, optimizer, dan Foundry secara eksplisit
 
@@ -546,7 +562,7 @@ Target awal: 100% branch untuk contract milik Etherdoc, bukan untuk dependency.
 - Buat indexer/reconciliation job yang membandingkan target chains dengan receive events.
 - Alert untuk pending terlalu lama, failed execution, fee balance rendah, dan config drift.
 
-### [ ] P2-05 Jadikan gas limit dan out-of-order policy bagian dari remote config
+### [x] P2-05 Jadikan gas limit dan kebijakan eksekusi bagian dari remote config
 
 **Bukti:** gas limit selalu `200_000` dan out-of-order selalu `true`.
 
@@ -557,6 +573,14 @@ Target awal: 100% branch untuk contract milik Etherdoc, bukan untuk dependency.
 - Dokumentasikan alasan penggunaan out-of-order.
 - Jika revocation/versioning ditambahkan, enforce monotonic version agar pesan lama aman.
 - Tambahkan fee quote dan gas regression test.
+
+**Implementasi (2026-07-19):**
+
+- Gas limit disimpan per remote sebagai `uint32`, divalidasi saat config JSON diparsing, dicatat pada
+  dispatch record/event, dan diuji untuk zero serta overflow ABI.
+- ExtraArgs V3 menghapus toggle out-of-order V2. Etherdoc memilih full finality dan default
+  CCV/executor; monotonic document version tetap mencegah state mundur.
+- Quote, maximum fee, destination-specific gas, dan known-answer V3 diuji.
 
 ### [ ] P2-06 Validasi constructor dan sederhanakan state
 
@@ -656,16 +680,16 @@ rotation yang eksplisit.
 
 - [ ] Selesaikan negative/fuzz/invariant test matrix.
 - [x] Hapus hardcoded network config dan Holesky.
-- [ ] Tambahkan fork + periodic E2E test.
+- [x] Tambahkan optional fork config + local E2E test.
 - [ ] Perketat CI dan format.
 
 ### Milestone 4 — Upgrade versi secara koheren
 
 - [x] Selaraskan dependency Chainlink tanpa version skew.
-- [x] Upgrade Chainlink Local dari beta.
+- [x] Hapus Chainlink Local dan simulator CCIP 1.x.
 - [ ] Pin Foundry/compiler/EVM/optimizer.
-- [ ] Evaluasi CCIP 2.0 di branch terpisah.
-- [ ] Review gas, bytecode, ABI, dan deployment migration.
+- [x] Evaluasi dan migrasikan CCIP 2.0.
+- [x] Review gas, bytecode, ABI, dan deployment migration.
 
 ### Milestone 5 — Dokumentasi dan production readiness
 
@@ -678,9 +702,9 @@ rotation yang eksplisit.
 ## Referensi Resmi
 
 - [Chainlink CCIP Directory — Testnet](https://docs.chain.link/ccip/directory/testnet)
-- [CCIPReceiver v1.6.0 API](https://docs.chain.link/ccip/api-reference/evm/v1.6.0/ccip-receiver)
 - [CCIP contracts 2.0.0 release](https://github.com/smartcontractkit/chainlink-ccip/releases/tag/contracts-ccip-v2.0.0)
-- [Chainlink Local 0.2.9 release](https://github.com/smartcontractkit/chainlink-local/releases/tag/v0.2.9)
+- [Mantle Sepolia CCIP Directory](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia-mantle-1)
+- [Ink Sepolia CCIP Directory](https://docs.chain.link/ccip/directory/testnet/chain/ink-testnet-sepolia)
 - [Foundry 1.7.1 release](https://github.com/foundry-rs/foundry/releases/tag/v1.7.1)
 - [forge-std 1.16.2 release](https://github.com/foundry-rs/forge-std/releases/tag/v1.16.2)
 - [Solidity 0.8.36 release](https://github.com/argotorg/solidity/releases/tag/v0.8.36)
