@@ -181,6 +181,11 @@ heterogeneous cross-chain lane. CI uses the same versions and raises fuzz runs t
 forge build
 forge test
 forge fmt --check
+forge lint --deny warnings src script test
+bash script/check-coverage.sh
+bash script/check-contract-sizes.sh
+bash script/check-gas-snapshot.sh
+bash script/ci-deployment-dry-run.sh
 ```
 
 Chainlink versions, exact commits, remapping rationale, and the upgrade gate are documented in the

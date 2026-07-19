@@ -582,7 +582,7 @@ Target awal: 100% branch untuk contract milik Etherdoc, bukan untuk dependency.
   Eksekusi fork menggunakan RPC publik resmi lulus 2/2. `forge build --sizes` mencatat runtime
   sender 18.820 byte (margin EIP-170 5.756 byte) dan receiver 11.522 byte.
 
-### [ ] P2-02 Perketat CI
+### [x] P2-02 Perketat CI
 
 **TODO:**
 
@@ -594,6 +594,36 @@ Target awal: 100% branch untuk contract milik Etherdoc, bukan untuk dependency.
 - Tambahkan dependency update automation yang membuat PR, bukan auto-merge.
 - Tambahkan gas snapshot/contract size regression check.
 - Uji deployment script dengan dry-run.
+
+**Implementasi (2026-07-19):**
+
+- `.gitattributes` menormalisasi seluruh source/text ke LF. CI menjalankan `forge fmt --check` dan
+  `forge lint --deny warnings src script test`; runner dipin ke `ubuntu-24.04`, sedangkan checkout
+  action, Foundry action, Foundry v1.7.1, Solc 0.8.36, Paris EVM, dan optimizer tetap diverifikasi.
+- `script/check-coverage.sh` menjadikan 100% line, statement, branch, dan function coverage untuk
+  `src/` sebagai hard threshold. Invariant tetap berjalan pada full suite, tetapi dikecualikan dari
+  instrumentasi coverage yang redundan.
+- Slither action dipin ke commit `b52cc1cbfee9ca3e8722dd5224299d16c9a6b80f` dan analyzer ke
+  0.11.5. Dependency, script, serta test tetap dikompilasi tetapi finding-nya difilter; severity
+  medium ke atas menggagalkan CI. Detector strict equality ditriase karena equality enum/digest/ID
+  adalah validasi yang disengaja.
+- Temuan Slither tentang callback Router ditangani dengan `ReentrancyGuard` pada dispatch dan test
+  adversarial ketika Router sendiri diberi operator role. Callback kedua ditolak dan outer dispatch
+  tetap menghasilkan tepat satu record.
+- Dependabot membuat PR mingguan terpisah untuk GitHub Actions dan git submodule, tanpa workflow
+  auto-approve atau auto-merge.
+- `.gas-snapshot` melacak registrasi, fee-protected dispatch, dan local end-to-end delivery dengan
+  toleransi 5%. Budget size machine-readable membatasi sender pada 19.500/21.500 byte dan receiver
+  pada 12.000/12.800 byte untuk runtime/initcode, sekaligus memverifikasi hard limit EIP.
+- `script/ci-deployment-dry-run.sh` menjalankan deploy sender dan receiver terhadap Anvil chain
+  31337 dengan Router/LINK stub. Kedua simulasi lulus dan nonce broadcaster dipastikan tidak berubah,
+  sehingga gate ini membuktikan tidak ada transaksi yang dibroadcast.
+- Verifikasi final lulus: fmt dan lint tanpa warning; suite default serta CI masing-masing 91 pass,
+  0 fail, 2 optional fork skip; profile CI menjalankan 1.024 fuzz case/property dan 256.000
+  call/invariant. Coverage tetap 100% untuk 410 line, 416 statement, 73 branch, dan 72 function.
+  Slither medium gate lulus; output tersisa hanya detector timestamp low-severity yang juga
+  mengelompokkan field enum pada struct bertimestamp. Runtime/initcode aktual adalah
+  18.880/20.826 byte untuk sender dan 11.522/12.321 byte untuk receiver.
 
 ### [ ] P2-03 Buat deployment/configuration scripts yang idempotent
 
@@ -737,7 +767,7 @@ rotation yang eksplisit.
 - [x] Selesaikan negative/fuzz/invariant test matrix.
 - [x] Hapus hardcoded network config dan Holesky.
 - [x] Tambahkan optional fork config + local E2E test.
-- [ ] Perketat CI dan format.
+- [x] Perketat CI dan format.
 
 ### Milestone 4 — Upgrade versi secara koheren
 

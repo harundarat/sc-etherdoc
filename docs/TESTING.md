@@ -18,17 +18,31 @@ Etherdoc separates deterministic PR checks from tests that depend on live networ
 
 ```shell
 forge fmt --check
-forge lint src script test
-forge build --sizes
+forge lint --deny warnings src script test
+bash script/check-contract-sizes.sh
+bash script/check-gas-snapshot.sh
 forge test -vv
 FOUNDRY_PROFILE=ci forge test -vv
-forge coverage --report summary --no-match-test 'invariant_' \
-  --no-match-coverage '(script|test|lib)'
+bash script/check-coverage.sh
+bash script/ci-deployment-dry-run.sh
 ```
 
 Invariant tests are excluded only from the coverage command because their paths are already covered
 by deterministic tests; they remain mandatory in both normal and CI-profile `forge test` runs.
 Coverage is scoped to `src/`, not vendored dependencies, scripts, mocks, or test harnesses.
+`check-coverage.sh` enforces 100% line, statement, branch, and function coverage. The gas snapshot
+tracks registration, fee-protected dispatch, and local end-to-end delivery with a 5% tolerance.
+Contract size budgets are deliberately below the EIP-170/EIP-3860 limits and require explicit review
+when raised.
+
+PR CI also runs Slither 0.11.5 through a fully pinned Slither action. Findings from `lib/`, scripts,
+and tests are filtered while dependencies remain available for compilation. Medium-or-higher
+production findings fail the job. `incorrect-equality` is explicitly triaged because strict enum,
+digest, and document-ID equality is required by Etherdoc's lifecycle and integrity checks.
+
+The Anvil deployment smoke test executes both deploy scripts with representative nonzero governance
+roles, validates configured Router/LINK bytecode, and asserts that the dry-run does not increment the
+deployer nonce. It never broadcasts a transaction.
 
 ## Optional live fork checks
 
