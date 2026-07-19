@@ -58,25 +58,25 @@ contract NetworkConfigTest is Test {
     }
 
     function test_loadsEachSupportedChainFromJson() external view {
-        NetworkConfigScript.NetworkConfig memory source = s_harness.loadNetwork("ethereumSepolia");
-        NetworkConfigScript.NetworkConfig memory destination = s_harness.loadNetwork("baseSepolia");
+        NetworkConfigScript.NetworkConfig memory source = s_harness.loadNetwork("mantleSepolia");
+        NetworkConfigScript.NetworkConfig memory destination = s_harness.loadNetwork("inkSepolia");
 
-        assertEq(source.name, "ethereumSepolia");
-        assertEq(source.chainId, 11_155_111);
-        assertEq(source.chainSelector, 16_015_286_601_757_825_753);
+        assertEq(source.name, "mantleSepolia");
+        assertEq(source.chainId, 5_003);
+        assertEq(source.chainSelector, 8_236_463_271_206_331_221);
         assertNotEq(source.router, address(0));
         assertNotEq(source.linkToken, address(0));
-        assertEq(source.rpcAlias, "ethereum_sepolia");
+        assertEq(source.rpcAlias, "mantle_sepolia");
         assertEq(source.gasLimit, 500_000);
         assertEq(uint8(source.feeMode), uint8(NetworkConfigScript.FeeMode.LINK));
         assertEq(source.sender, address(0));
 
-        assertEq(destination.name, "baseSepolia");
-        assertEq(destination.chainId, 84_532);
-        assertEq(destination.chainSelector, 10_344_971_235_874_465_080);
+        assertEq(destination.name, "inkSepolia");
+        assertEq(destination.chainId, 763_373);
+        assertEq(destination.chainSelector, 9_763_904_284_804_119_144);
         assertNotEq(destination.router, address(0));
         assertNotEq(destination.linkToken, address(0));
-        assertEq(destination.rpcAlias, "base_sepolia");
+        assertEq(destination.rpcAlias, "ink_sepolia");
         assertEq(destination.gasLimit, 500_000);
         assertEq(destination.receiver, address(0));
     }
@@ -135,10 +135,10 @@ contract NetworkConfigTest is Test {
     function test_configureRejectsMissingDeploymentAddress() external {
         vm.expectRevert(
             abi.encodeWithSelector(
-                NetworkConfigScript.DeploymentAddressMissing.selector, "baseSepolia", "EtherdocReceiver"
+                NetworkConfigScript.DeploymentAddressMissing.selector, "inkSepolia", "EtherdocReceiver"
             )
         );
-        s_harness.requireDeployment(address(0), "baseSepolia", "EtherdocReceiver");
+        s_harness.requireDeployment(address(0), "inkSepolia", "EtherdocReceiver");
     }
 
     function _network(string memory _name) private view returns (NetworkConfigScript.NetworkConfig memory network) {
