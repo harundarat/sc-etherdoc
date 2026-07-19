@@ -4,8 +4,8 @@ pragma solidity 0.8.36;
 import {Test} from "forge-std/Test.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
-import {MockRouter} from "./EtherdocSender.t.sol";
 import {MockLinkToken} from "./mocks/MockLinkToken.sol";
+import {MockRouter} from "./mocks/MockRouter.sol";
 import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
 
 contract EtherdocProvenanceTest is Test {

@@ -2,8 +2,6 @@
 pragma solidity 0.8.36;
 
 import {Test} from "forge-std/Test.sol";
-import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
-import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
 import {ExtraArgsCodec} from "@chainlink/contracts-ccip/contracts/libraries/ExtraArgsCodec.sol";
 import {FinalityCodec} from "@chainlink/contracts-ccip/contracts/libraries/FinalityCodec.sol";
 import {SafeERC20} from "@openzeppelin/contracts@5.3.0/token/ERC20/utils/SafeERC20.sol";
@@ -12,78 +10,8 @@ import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 import {ApprovalRestrictedToken} from "./mocks/ApprovalRestrictedToken.sol";
 import {MockLinkToken} from "./mocks/MockLinkToken.sol";
+import {MockRouter} from "./mocks/MockRouter.sol";
 import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
-
-contract MockRouter is IRouterClient {
-    error SimulatedLaneFailure(uint64 destinationChainSelector);
-
-    uint256 public constant FEE = 1 ether;
-    uint256 private s_fee = FEE;
-    uint256 private s_nonce;
-    mapping(uint64 destinationChainSelector => bool shouldFail) private s_failingLanes;
-    mapping(uint64 destinationChainSelector => address receiver) private s_lastReceivers;
-    mapping(uint64 destinationChainSelector => uint32 gasLimit) private s_lastGasLimits;
-    mapping(uint64 destinationChainSelector => bytes4 finalityConfig) private s_lastFinalityConfigs;
-    mapping(uint64 destinationChainSelector => uint256 ccvCount) private s_lastCCVCounts;
-    mapping(uint64 destinationChainSelector => address executor) private s_lastExecutors;
-
-    function setLaneFailure(uint64 _destinationChainSelector, bool _shouldFail) external {
-        s_failingLanes[_destinationChainSelector] = _shouldFail;
-    }
-
-    function setFee(uint256 _fee) external {
-        s_fee = _fee;
-    }
-
-    function isChainSupported(uint64) external pure returns (bool supported) {
-        return true;
-    }
-
-    function getFee(uint64, Client.EVM2AnyMessage memory) external view returns (uint256 fee) {
-        return s_fee;
-    }
-
-    function ccipSend(uint64 _destinationChainSelector, Client.EVM2AnyMessage calldata _message)
-        external
-        payable
-        returns (bytes32 messageId)
-    {
-        if (s_failingLanes[_destinationChainSelector]) {
-            revert SimulatedLaneFailure(_destinationChainSelector);
-        }
-
-        ExtraArgsCodec.GenericExtraArgsV3 memory extraArgs =
-            ExtraArgsCodec._decodeGenericExtraArgsV3(_message.extraArgs);
-        s_lastReceivers[_destinationChainSelector] = abi.decode(_message.receiver, (address));
-        s_lastGasLimits[_destinationChainSelector] = extraArgs.gasLimit;
-        s_lastFinalityConfigs[_destinationChainSelector] = extraArgs.requestedFinalityConfig;
-        s_lastCCVCounts[_destinationChainSelector] = extraArgs.ccvs.length;
-        s_lastExecutors[_destinationChainSelector] = extraArgs.executor;
-
-        s_nonce++;
-        return keccak256(abi.encode(_destinationChainSelector, _message.receiver, _message.data, s_nonce));
-    }
-
-    function lastReceiver(uint64 _destinationChainSelector) external view returns (address) {
-        return s_lastReceivers[_destinationChainSelector];
-    }
-
-    function lastGasLimit(uint64 _destinationChainSelector) external view returns (uint32) {
-        return s_lastGasLimits[_destinationChainSelector];
-    }
-
-    function lastFinalityConfig(uint64 _destinationChainSelector) external view returns (bytes4) {
-        return s_lastFinalityConfigs[_destinationChainSelector];
-    }
-
-    function lastCCVCount(uint64 _destinationChainSelector) external view returns (uint256) {
-        return s_lastCCVCounts[_destinationChainSelector];
-    }
-
-    function lastExecutor(uint64 _destinationChainSelector) external view returns (address) {
-        return s_lastExecutors[_destinationChainSelector];
-    }
-}
 
 contract ExtraArgsCodecHarness {
     function encode(ExtraArgsCodec.GenericExtraArgsV3 memory _extraArgs) external pure returns (bytes memory) {
