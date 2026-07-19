@@ -408,13 +408,13 @@ test.
 | Solidity | pragma exact `0.8.24` | `0.8.36` | Tertinggal; upgrade bertahap dan review breaking/compiler changes |
 | Foundry | lokal `1.5.1`; CI tidak pin binary | `1.7.1` | Build lokal/CI tidak reproducible |
 | `forge-std` | commit `77041d...`, versi `1.9.7` | `1.16.2` | Dipin dengan baik tetapi tertinggal |
-| `@chainlink/contracts-ccip` | commit `2114b...`, versi `1.6.0` | `2.0.0` | Upgrade mayor; jangan dilakukan blind |
-| `@chainlink/local` | `0.2.5-beta.0` | `0.2.9` | Repo memakai beta lama |
-| `@chainlink/contracts` | copy vendored `1.3.0` | `1.5.0` | Tidak selaras dengan CCIP/local yang meminta 1.4.0 |
+| `@chainlink/contracts-ccip` | commit `0e3e0fc...`, versi `1.6.2` | `2.0.0` | Selaras dengan Local; upgrade mayor dipisahkan |
+| `@chainlink/local` | commit `f8c0efe...`, versi `0.2.9` | `0.2.9` | Exact stable release |
+| `@chainlink/contracts` | commit `86aa5a1...`, versi `1.5.0` | `1.5.0` | Selaras dengan matrix Local |
 | `actions/checkout` | `@v4` | `v7.0.0` | Major lama dan hanya pin tag |
 | `foundry-toolchain` action | `@v1`, tanpa input versi Foundry | action `v1.9.0` | Action dan binary Foundry sama-sama tidak immutable |
 
-### [ ] P1-08 Hilangkan version skew Chainlink
+### [x] P1-08 Hilangkan version skew Chainlink
 
 **Bukti:**
 
@@ -438,6 +438,20 @@ Build saat ini kebetulan lulus, tetapi kombinasi ini berada di luar dependency d
   resmi yang dipin.
 - Hindari dua copy CCIP/forge-std berbeda di root dan nested dependency bila resolusinya ambigu.
 - Catat checksums/commit dan alasan versi dalam dependency policy.
+
+**Implementasi (2026-07-19):**
+
+- Matrix exact dari Chainlink Local `v0.2.9` dipakai: Contracts `1.5.0` dan CCIP `1.6.2`.
+- Root sekarang memetakan kedua package Chainlink ke nested gitlink Local yang sesuai deklarasi
+  package dan dipin ke full commit; copy Brownie 1.3.0 serta submodule CCIP root dihapus.
+- Import OpenZeppelin lama yang bergantung pada vendor path Chainlink dipindah ke alias versioned
+  `@openzeppelin/contracts@5.0.2` milik matrix yang sama.
+- Root dan nested `forge-std` tetap ada sebagai direct development dependency masing-masing, tetapi
+  keduanya berada pada exact commit `77041d...` dan remapping root eksplisit sehingga tidak ambigu.
+- Versi, full commit, alasan pemilihan, prosedur verifikasi, dan update gate dicatat di
+  `docs/DEPENDENCY_POLICY.md`.
+- Regression lane aplikasi lulus melalui `Integration.t.sol`; seluruh 54 test lulus setelah clean
+  build dengan ukuran bytecode Etherdoc tidak berubah.
 
 ### [ ] P1-09 Evaluasi CCIP 2.0 sebagai migration project terpisah
 
@@ -647,8 +661,8 @@ rotation yang eksplisit.
 
 ### Milestone 4 — Upgrade versi secara koheren
 
-- [ ] Selaraskan dependency Chainlink tanpa version skew.
-- [ ] Upgrade Chainlink Local dari beta.
+- [x] Selaraskan dependency Chainlink tanpa version skew.
+- [x] Upgrade Chainlink Local dari beta.
 - [ ] Pin Foundry/compiler/EVM/optimizer.
 - [ ] Evaluasi CCIP 2.0 di branch terpisah.
 - [ ] Review gas, bytecode, ABI, dan deployment migration.
