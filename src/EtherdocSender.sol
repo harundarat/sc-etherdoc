@@ -328,6 +328,8 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
         EtherdocTypes.DocumentRecord memory documentSnapshot = document;
         EtherdocTypes.Operation operation = EtherdocTypes.operationFor(documentSnapshot.status);
         uint256 fees;
+        // The Router assigns messageId, so the record must be finalized after this protected call.
+        // slither-disable-next-line reentrancy-no-eth
         (messageId, fees) = _sendMessage(_destinationChainSelector, remote, documentSnapshot, operation, _maximumFee);
 
         uint64 sentAt = uint64(block.timestamp);
