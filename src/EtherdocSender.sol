@@ -537,6 +537,14 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
         return s_remotes[_destinationChainSelector];
     }
 
+    function getRouter() external view returns (address) {
+        return address(i_router);
+    }
+
+    function getFeeToken() external view returns (address) {
+        return address(i_linkToken);
+    }
+
     function isDocumentRegistered(bytes32 _documentId) external view returns (bool) {
         return s_documents[_documentId].status != EtherdocTypes.DocumentStatus.UNKNOWN;
     }

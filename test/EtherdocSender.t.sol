@@ -55,6 +55,8 @@ contract EtherdocSenderTest is Test {
     function test_registersCanonicalDocumentOnce() external {
         EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(s_documentId);
 
+        assertEq(s_sender.getRouter(), address(s_router));
+        assertEq(s_sender.getFeeToken(), address(s_link));
         assertEq(sha256(bytes("document")), DOCUMENT_DIGEST);
         assertEq(CIDTestHelper.rawCIDFor("document"), DOCUMENT_CID);
         assertEq(s_documentId, s_sender.computeDocumentId(address(this), DOCUMENT_DIGEST));
