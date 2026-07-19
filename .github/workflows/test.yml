@@ -45,8 +45,11 @@ jobs:
       - name: Run Forge lint
         run: forge lint --deny warnings src script test
 
-      - name: Run Forge build
-        run: forge build --sizes
+      - name: Enforce contract size budgets
+        run: bash script/check-contract-sizes.sh
+
+      - name: Check gas snapshot
+        run: bash script/check-gas-snapshot.sh
 
       - name: Enforce source coverage
         run: bash script/check-coverage.sh

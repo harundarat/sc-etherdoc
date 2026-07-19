@@ -1,0 +1,3 @@
+EtherdocSenderTest:test_quoteFeeAndMaximumProtectAgainstFeeIncrease() (gas: 305132)
+EtherdocSenderTest:test_registersCanonicalDocumentOnce() (gas: 154136)
+Integration:test_sendAndReceiveCrossChainMessagePayFeesInLink() (gas: 916516)

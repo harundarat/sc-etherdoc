@@ -1,0 +1,14 @@
+[
+  {
+    "contract": "EtherdocSender",
+    "artifact": "out/EtherdocSender.sol/EtherdocSender.json",
+    "maxRuntimeBytes": 19500,
+    "maxInitcodeBytes": 21500
+  },
+  {
+    "contract": "EtherdocReceiver",
+    "artifact": "out/EtherdocReceiver.sol/EtherdocReceiver.json",
+    "maxRuntimeBytes": 12000,
+    "maxInitcodeBytes": 12800
+  }
+]
