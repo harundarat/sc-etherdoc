@@ -477,8 +477,10 @@ interface baru. Jangan mengubah dependency lalu menganggap kontrak lama setara.
   kompatibel. Replay protection, trusted remote, lifecycle, pause, dan receiver-revert/manual
   execution tetap dipertahankan.
 - Config contoh diganti menjadi Mantle Sepolia → Ink Sepolia. Router, LINK, selector, explorer, dan
-  RPC alias diverifikasi terhadap Directory; fork test membuktikan Router Mantle mendukung Ink dan
-  menerima quote ExtraArgs V3.
+  RPC alias diverifikasi terhadap Directory; fork test membuktikan kedua Router memiliki bytecode,
+  mendukung selector lawan, dan menerima quote ExtraArgs V3. Directory yang diperiksa ulang pada
+  2026-07-19 melabeli Mantle → Ink sebagai lane 1.6.0 dan Ink → Mantle sebagai 2.0.0; versi package
+  kontrak, kemampuan Router, dan versi lane tidak lagi disamakan dalam dokumentasi.
 - Known-answer codec, overflow gas, V1/V2 interface, policy receiver, lifecycle, failure/retry,
   Router harness E2E, dan optional fork coverage ditambahkan.
 
@@ -524,7 +526,7 @@ floating Foundry stable melalui `foundry-rs/foundry-toolchain@v1`.
 
 ## P2 — Test, CI, Deployment, dan Observability
 
-### [ ] P2-01 Tambahkan unit, negative, fuzz, invariant, dan multichain tests
+### [x] P2-01 Tambahkan unit, negative, fuzz, invariant, dan multichain tests
 
 Minimal test matrix:
 
@@ -546,6 +548,39 @@ Minimal test matrix:
 - periodic testnet E2E yang melacak message sampai destination, terpisah dari PR CI agar tidak flaky.
 
 Target awal: 100% branch untuk contract milik Etherdoc, bukan untuk dependency.
+
+**Implementasi (2026-07-19):**
+
+- Mock Router dipisahkan dari test contract dan menyediakan failure injection untuk `getFee`,
+  `ccipSend`, deferred delivery, arbitrary source/sender encoding, serta manual retry.
+- Suite negative mencakup seluruh setter/admin boundary, issuer ownership, pause state machine,
+  remote pair cross-product, zero/malformed envelope, payload/schema/operation/document validation,
+  duplicate/replay, provenance/state conflict, fee/token/Router failure, recovery, withdrawal, serta
+  field event lengkap dengan indexed document ID.
+- Sebelas fuzz properties mencakup raw/dag-pb CID, duplicate CID lintas issuer yang tetap memiliki
+  provenance berbeda, `uint32` gas/selector/fee bounds, EIP-712 signer dan tamper resistance,
+  payload di dalam/di luar bound, serta 2–8 lane independen.
+- Handler-based invariant suite mengacak delivery/replay register dan revoke. Pada profile default,
+  masing-masing dari tiga invariant menjalankan 128.000 call tanpa revert; ghost state membuktikan
+  version/status receiver tidak mundur, dispatch per versi immutable, dan processed message selalu
+  menunjuk canonical document ID. Profile CI menaikkannya menjadi 256.000 call per invariant dan
+  fuzz menjadi 1.024 run per property.
+- Local Router harness tetap menguji pengiriman sinkron dan deferred multichain. Optional fork test
+  untuk Mantle dan Ink memverifikasi Router/LINK bytecode, `isChainSupported`, dan quote ExtraArgs V3
+  dua arah; masing-masing skip eksplisit bila RPC tidak tersedia.
+- Workflow `testnet-e2e.yml` terpisah dari PR CI, disabled by default, dan hanya aktif dengan
+  protected environment plus `CCIP_E2E_ENABLED=true`. Workflow mendaftarkan CID unik, dispatch,
+  mengambil indexed `messageId`, lalu polling receipt destination sampai document ID cocok.
+- Guard yang terbukti tidak mungkin dicapai di schema v2 dihapus: payload sender selalu fixed-size
+  di bawah batas karena CID canonical 59 byte, lifecycle hanya menerima version 1/2, dan decoder CID
+  sudah dibatasi panjang input. Precondition registration pause dipindah dari modifier overload ke
+  private check agar source mapping coverage akurat tanpa perubahan semantik.
+- `forge coverage --report summary --no-match-test 'invariant_' --no-match-coverage
+  '(script|test|lib)'` menghasilkan 100% line (410/410), statement (416/416), branch (73/73), dan
+  function (72/72) untuk seluruh `src/`.
+- Suite default dan CI masing-masing lulus 90 test dengan 0 failure dan 2 fork skip tanpa RPC.
+  Eksekusi fork menggunakan RPC publik resmi lulus 2/2. `forge build --sizes` mencatat runtime
+  sender 18.820 byte (margin EIP-170 5.756 byte) dan receiver 11.522 byte.
 
 ### [ ] P2-02 Perketat CI
 
@@ -699,7 +734,7 @@ rotation yang eksplisit.
 
 ### Milestone 3 — Test dan config
 
-- [ ] Selesaikan negative/fuzz/invariant test matrix.
+- [x] Selesaikan negative/fuzz/invariant test matrix.
 - [x] Hapus hardcoded network config dan Holesky.
 - [x] Tambahkan optional fork config + local E2E test.
 - [ ] Perketat CI dan format.

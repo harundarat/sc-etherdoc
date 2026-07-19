@@ -194,9 +194,10 @@ Deployment scripts do not contain network addresses or chain selectors. They loa
 Sepolia as destination with LINK fee payment.
 
 The lane and Router/LINK values in `config/networks/testnet.json` were last verified on
-**2026-07-19** against the official CCIP Directory. The configured Router accepts an ExtraArgs V3
-quote for Mantle Sepolia → Ink Sepolia; the reverse Ink → Mantle lane is also listed as version
-`2.0.0`:
+**2026-07-19** against the official CCIP Directory. Both configured Routers accept ExtraArgs V3
+quotes in fork tests. The Directory currently labels Mantle Sepolia → Ink Sepolia as lane `1.6.0`
+and Ink Sepolia → Mantle Sepolia as `2.0.0`; contract package version, Router capability, and lane
+version are tracked separately:
 
 - [Mantle Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia-mantle-1)
 - [Ink Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ink-testnet-sepolia)
@@ -254,11 +255,15 @@ payment is implemented in the contract. The configure commands can broadcast dir
 their signer is governance. For production multisig ownership, review the validated parameters and
 execute the equivalent `configureTrustedRemote` and `configureRemote` calldata through the multisig.
 
-The optional Mantle fork test checks `isChainSupported(Ink)` and obtains a live V3 quote:
+The optional fork tests verify Router/LINK bytecode, lane support, and live V3 quotes in both
+directions:
 
 ```shell
 MANTLE_SEPOLIA_RPC_URL=<rpc-url> \
-  forge test --match-contract CCIPV2MantleForkTest -vv
+INK_SEPOLIA_RPC_URL=<rpc-url> \
+  forge test --match-path test/CCIPV2Fork.t.sol -vv
 ```
 
-It is reported as skipped when `MANTLE_SEPOLIA_RPC_URL` is absent.
+Each direction is reported as skipped when its corresponding RPC is absent. The full unit,
+negative, fuzz, invariant, fork, coverage, and scheduled live-E2E strategy is documented in
+[Testing](docs/TESTING.md).

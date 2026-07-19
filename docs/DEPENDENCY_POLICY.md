@@ -73,7 +73,7 @@ Dependency changes must be submitted for review and must not auto-merge. A chang
 4. verify each target lane and Router against the current CCIP Directory;
 5. run `forge fmt --check`, `forge build --sizes`, and the complete `forge test -vv` suite using the
    Foundry version in `.foundry-version`;
-6. exercise `test/Integration.t.sol` and the optional live Router fork test; and
+6. exercise `test/Integration.t.sol` and both optional live Router fork tests; and
 7. use new deployments and controlled remote rotation for any incompatible CCIP or storage change.
 
 Reviewers can compare checked-out content identifiers with this policy using:
