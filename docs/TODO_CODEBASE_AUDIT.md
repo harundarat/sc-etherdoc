@@ -12,25 +12,6 @@ dicatat sebagai kebutuhan integrasi, bukan task repository ini.
 Kerjakan dari atas ke bawah. Jangan membuka kembali keputusan selesai kecuali perubahan baru
 melanggar invariant yang tercatat.
 
-### [ ] P2-06 Validasi dependency kontrak pada constructor
-
-`EtherdocSender` saat ini menyimpan Router dan LINK sebagai immutable, tetapi constructor belum
-menolak zero-address atau address tanpa bytecode. Deployment script sudah melakukan preflight,
-namun kontrak harus tetap aman ketika di-deploy tanpa script resmi.
-
-Implementasi:
-
-- Tambahkan custom error dan validasi constructor sender untuk Router dan LINK:
-  - address bukan zero-address;
-  - `address.code.length > 0`.
-- Evaluasi dan, jika tetap kompatibel dengan `CCIPReceiver` 2.0, tambahkan validasi bytecode Router
-  pada receiver. Base contract sudah menolak zero-address.
-- Tambahkan unit test untuk seluruh address invalid dan deployment valid.
-- Pastikan perubahan tetap melewati budget runtime bytecode dan initcode.
-
-Selesai jika deployment langsung tidak dapat menghasilkan kontrak dengan Router atau LINK yang
-tidak dapat dipanggil.
-
 ### [ ] P3-01 Evaluasi encoding CID/payload yang lebih ringkas
 
 Task ini bersyarat pada hasil benchmark. `bytes32 documentId` sudah digunakan sebagai storage key
@@ -98,6 +79,8 @@ jika seluruh replica berasal dari issuer yang sama.
 - [x] Callback invalid sengaja revert agar pesan yang sama dapat di-manual-execute setelah perbaikan.
 - [x] Fee dibayar treasury dalam LINK dan dibatasi caller `maximumFee`; withdrawal hanya governance.
 - [x] Governance two-step dan role issuer/operator/pauser dipisahkan.
+- [x] Constructor sender menolak Router/LINK zero atau tanpa bytecode; receiver juga menolak Router
+  zero atau tanpa bytecode, independen dari preflight deployment script.
 - [x] CCIP 2.0 memakai ExtraArgs V3, full finality, default CommitteeVerifier, dan default executor.
   FTF, custom CCV/executor, token transfer, serta compatibility deployment/pesan lama tidak
   didukung.
