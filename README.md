@@ -1,189 +1,372 @@
 # Etherdoc
 
-Etherdoc registers a canonical file digest and CIDv1 retrieval reference on a source chain, then
-dispatches that record to one or more destination chains through Chainlink CCIP.
+Etherdoc is a non-upgradeable smart contract registry for document provenance. It records a
+canonical file digest and CIDv1 retrieval reference on a source chain, then replicates that record
+to selected destination chains through Chainlink CCIP.
 
-## Trust model and verification semantics
+The contracts answer four separate questions:
 
-Etherdoc is an issuer registry, not a legal identity provider. Source governance administers the
-trusted issuer set with `setIssuerAuthorization`; the initial issuer is an explicit constructor
-argument and is not implicitly the deployer. An authorized issuer may register directly, or a
-relayer may call `registerDocumentBySig` with the issuer's EIP-712 signature. Off-chain consumers
-remain responsible for mapping an issuer address to a real organization and deciding whether that
-organization is trusted for the document type being checked.
+- do downloaded bytes match the digest registered on-chain?
+- which address issued the record, and when?
+- is the record currently active, revoked, or superseded?
+- did a selected destination chain receive the replicated state?
 
-Issuer authorization gates new registrations and superseding records. Removing an issuer prevents
-new issuance but does not invalidate its historical records automatically. The original issuer can
-still revoke its existing records, so removing issuance permission does not remove the recovery
-path. Governance ownership alone does not let the administrator rewrite or revoke another issuer's
-record.
+Etherdoc does not identify the real-world organization behind an address, store document bytes, or
+make a document legally authentic by itself.
 
-Verification terms have deliberately separate meanings:
+> [!IMPORTANT]
+> Etherdoc is currently a testnet-stage project. It has never been deployed to mainnet, publishes no
+> canonical production contract addresses, and should not be treated as independently audited
+> production software.
 
-- **Integrity**: SHA-256 of the exact bytes downloaded through the CID equals the stored
-  `contentDigest`.
-- **Existence/timestamping**: a record was registered at `registeredAt` on `sourceChainId`.
-- **Authenticity**: the source contract accepted the record from an authorized issuer, directly or
-  through a valid EIP-712 signature. This is only as strong as the off-chain trust mapping for that
-  issuer address.
-- **Validity**: the current record status is `ACTIVE`; `REVOKED` and `SUPERSEDED` records remain
-  queryable but are not valid.
+## Start here
 
-`verifyDocument(documentId, contentDigest)` compares a caller-supplied digest with the record and
-returns the full record, an integrity result, and current validity. The contract cannot download
-IPFS content: a verifier must download it and calculate SHA-256 first. The function does not collapse
-integrity, issuer trust, and validity into one "authentic" boolean.
+| Goal | Entry point |
+| --- | --- |
+| Build and run the contracts locally | [Quick start](#quick-start) |
+| Understand identities, records, and lifecycle | [How Etherdoc works](#how-etherdoc-works) |
+| Integrate contract calls and events | [Contracts and public API](#contracts-and-public-api) |
+| Review the security boundary | [Trust and verification model](#trust-and-verification-model) |
+| Deploy and configure a testnet lane | [Network configuration and deployment](#network-configuration-and-deployment) |
+| Operate governance or recover a failed message | [Documentation map](#documentation-map) |
+| Contribute and run every quality gate | [Development and testing](#development-and-testing) |
 
-## Document provenance
+## Architecture
 
-The primary content identifier is SHA-256 of the exact uploaded file bytes. `documentId` is
-`keccak256(abi.encode(issuer, contentDigest))`, so changing a filename, MIME type, gateway URL, or
-IPFS DAG layout does not change the document identity, while changing one file byte does. Two
-issuers may attest to the same bytes independently.
+```mermaid
+flowchart LR
+    I[Issuer or relayer] -->|register / revoke / supersede| S[EtherdocSender]
+    I -->|upload encrypted or public bytes| P[(IPFS)]
+    S -->|DocumentPayload v3 + LINK fee| C[Chainlink CCIP]
+    C -->|authenticated message| R[EtherdocReceiver]
+    V[Verifier or indexer] -->|read source record| S
+    V -->|read destination receipt| R
+    V -->|download and hash bytes| P
+```
 
-Every record stores the document ID, raw-file digest, canonical CIDv1, decoded CID codec and
-multihash digest, optional `bytes32` metadata commitment, issuer, source chain ID,
-registration/update timestamps, schema version, monotonic record version, status, and supersession
-links. The accepted CID profile is CIDv1, lowercase unpadded base32 without an `ipfs://` prefix,
-`raw` (`0x55`) or `dag-pb` (`0x70`) codec, and a 32-byte SHA2-256 multihash. For a `raw` CID, its
-multihash must equal `contentDigest`; for `dag-pb`, the DAG-root hash and raw-file hash are expected
-to differ and both are retained.
+`EtherdocSender` is the canonical registry and outbound CCIP endpoint. `EtherdocReceiver` is a
+destination replica that accepts messages only from explicitly trusted
+`(sourceChainSelector, sender)` pairs. Registration and dispatch are separate transactions, so one
+document version can be sent to several independent destinations without coupling their success.
 
-Hash bytes exactly as uploaded: Etherdoc performs no line-ending, Unicode, text-encoding, archive,
-PDF-metadata, or EXIF normalization. Privacy-sensitive documents must be encrypted before upload;
-the digest then commits to the ciphertext, and encryption keys remain off-chain. The complete
-canonicalization, verifier, pinning, retention, and recovery requirements are in the
-[IPFS and content integrity policy](docs/IPFS_POLICY.md).
+The repository contains only the smart contracts and their operational tooling. Frontend, backend,
+indexer, database, pinning service, and alerting implementations belong in separate repositories.
 
-Records start at version 1 with status `ACTIVE`. `revokeDocument` increments the version and changes
-the status to `REVOKED` without deleting the CID, issuer, timestamps, or prior dispatch records.
-`supersedeDocument` marks the old record `SUPERSEDED`, links it to a new active record, and preserves
-both sides of the history. Revoked and superseded records cannot be reactivated.
+## Quick start
 
-Relayed registration, revocation, and supersession use the EIP-712 domain `Etherdoc`, version `2`,
-the current chain ID, and the sender contract address. Each signature has an issuer-scoped monotonic
-nonce and deadline. A successful signed operation consumes one nonce, preventing replay.
+### Prerequisites
 
-## Document workflow
+- Git with submodule support;
+- Bash;
+- `foundryup` to install the pinned Foundry release;
+- `jq` for deployment-manifest workflows.
 
-Registration and cross-chain dispatch are separate operations:
+Clone recursively and install the exact toolchain recorded by the repository:
 
-1. Hash the exact upload bytes with SHA-256, upload them using the canonical IPFS profile, and meet
-   the pin-confirmation gate in the IPFS policy.
-2. Authorize the issuer, then call
-   `registerDocument(contentDigest, cid[, metadataCommitment])` directly or use the corresponding
-   EIP-712 relayer function.
-3. Configure each destination lane atomically with
-   `configureRemote(selector, receiver, gasLimit, true)`.
-4. The configured operator calls `quoteFee(documentId, selector)`, chooses the largest acceptable
-   LINK fee, then calls `dispatchDocument(documentId, selector, maximumFee)` in a separate
-   transaction for every destination.
-5. Read `getDispatch(documentId, selector)` to track the CCIP `messageId`, destination, receiver,
-   configured gas limit, document version, send timestamp, and source-side dispatch status for each
-   lane.
+```shell
+git clone --recurse-submodules <repository-url>
+cd sc-etherdoc
 
-Cross-chain replication is asynchronous and non-atomic. Dispatching to several chains is one
-off-chain orchestrated workflow, not one transaction that becomes final everywhere simultaneously.
-The orchestrator should submit and monitor one transaction per destination. Consequently, a failure
-on one lane does not revert successful lanes. If a router call fails, no dispatch record is written
-for that lane and the orchestrator can retry it. A successful lane rejects duplicate normal
-dispatches for the same document version. After revocation or supersession increments a record's
-version, that new state can be dispatched to the same lane. Historical dispatch evidence remains
-available through `getDispatchAtVersion`.
+foundryup --install "$(cat .foundry-version)"
+forge --version
+```
 
-The sender uses a treasury-funded LINK model: LINK is transferred to the sender ahead of dispatch,
-and only an authorized operator can spend it through `dispatchDocument`. It does not pull fees from
-document issuers or relayers and does not support native-fee payment. A quote is only a point-in-time
-Router estimate, not a reservation; the fee may change before mining. The required `maximumFee`
-bounds that race, so an orchestrator should apply an explicit tolerance to the quote and requote
-after `FeeExceedsMaximum` instead of using an unlimited value.
-
-LINK approval uses `SafeERC20.forceApprove` for tokens that require resetting a non-zero allowance.
-Governance can return excess LINK or rescue any other ERC-20 with
-`withdrawToken(token, recipient, amount)`; zero token and recipient addresses are rejected and every
-successful withdrawal emits `TokenWithdrawn`. Operators should retain enough LINK for pending
-dispatches and send withdrawals to the configured treasury.
-
-`DISPATCHED` only means that the source Router accepted the CCIP message. It does not prove that the
-destination received or processed it; destination events and CCIP message status must be monitored
-separately. The destination applies only a higher record version, so an out-of-order older message
-cannot reactivate a revoked or superseded document.
-
-CCIP data uses the fixed 448-byte `DocumentPayload` schema version 3. It sends the operation and
-provenance fields once, carries a CID as compact `(codec, multihashDigest)` metadata, and lets the
-receiver deterministically reconstruct the canonical CID plus document ID. Both endpoints reject a
-zero file digest, unsupported CID codecs, raw CID/file-digest mismatches, unsupported or internally
-inconsistent envelopes, and payloads whose encoded length is not exact. Older payload schemas are
-intentionally incompatible and require a new deployment/remote rotation rather than being silently
-reinterpreted. The field layout, benchmark, and reconstruction rules are documented in the
-[payload schema](docs/PAYLOAD_SCHEMA.md).
-
-The receiver authenticates the source pair before decoding payload data and records every
-successfully handled CCIP `messageId`. Re-delivery of the same message and a distinct message carrying
-an equal or older document version are ignored idempotently and emit `MessageIgnored`; invalid or
-conflicting payloads revert. `isMessageProcessed(messageId)` and `getMessageDocument(messageId)`
-provide replay and indexing evidence. ExtraArgs V3 has no v1 `allowOutOfOrderExecution` toggle.
-Etherdoc independently enforces monotonic state: schema 3 permits only version 1 `REGISTER` records
-followed by one version 2 terminal operation, so an older active record cannot overwrite a received
-revocation or supersession.
-
-Every outbound message uses CCIP 2.0 `GenericExtraArgsV3`. The callback gas limit is stored as
-`uint32` per remote. Etherdoc requests `WAIT_FOR_FINALITY_FLAG`, leaves the CCV list empty to select
-the default CommitteeVerifier, and leaves the executor at `address(0)` to select the default
-executor. Faster-than-finality (FTF), custom CCVs, custom executors, token transfers, and
-`NO_EXECUTION_TAG` are not enabled. CCIP 2.0 execution is permissionless even when the default
-executor is selected; verified messages remain manually executable.
-
-Receiver failures deliberately revert so CCIP retains the failed execution and return data for
-monitoring and manual execution. Authentication failures are never stored as valid messages. After a
-source Router has accepted a dispatch, recover the same message ID instead of sending a duplicate
-payload. See the [CCIP recovery runbook](docs/CCIP_RECOVERY_RUNBOOK.md) for monitoring, triage, manual
-execution, lane pause/resume, and incident evidence.
-
-## Governance and emergency controls
-
-Production `owner()` addresses must be multisig contracts supplied explicitly at deployment.
-Governance controls issuers, operational roles, remotes, treasury withdrawal, and unpause. A separate
-`OPERATOR_ROLE` can only dispatch; `PAUSER_ROLE` can pause registration/dispatch on the sender and
-receive on the destination. Relayers receive no privileged role and can only submit valid issuer
-signatures. Ownership transfer remains two-step through `transferOwnership` and `acceptOwnership`.
-
-A registration pause still permits issuer-authorized revocation. A receive pause deliberately
-reverts CCIP execution without marking the message processed, so the same message ID can be retried.
-Only governance can unpause after incident review; resume destination receive before source
-dispatch. Contracts are intentionally non-upgradeable—logic changes use redeployment and explicit
-remote rotation. See the
-[governance and emergency pause runbook](docs/GOVERNANCE_RUNBOOK.md) for the role matrix, deployment,
-rotation, and recovery policy.
-
-## Development
-
-Clone with recursive submodules, or initialize them before building an existing checkout:
+For an existing checkout, synchronize dependencies before building:
 
 ```shell
 git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
-The supported toolchain is Foundry **v1.7.1**, recorded in `.foundry-version`. Install that exact
-release instead of a floating `stable` build:
-
-```shell
-foundryup --install "$(cat .foundry-version)"
-forge --version
-```
-
-All application, script, and test sources compile with Solidity **0.8.36**, target the **Paris** EVM,
-and use the optimizer with **200 runs**. These settings live in `foundry.toml`; the Paris target
-matches the CCIP 2.0 contract build target and avoids accidentally emitting newer opcodes on a
-heterogeneous cross-chain lane. CI uses the same versions and raises fuzz runs through its explicit
-`ci` profile.
+Build and run the deterministic test suite:
 
 ```shell
 forge build
-forge test
+forge test -vv
+```
+
+Application, script, and test sources use Solidity `0.8.36`, target the Paris EVM, and compile with
+the optimizer enabled at 200 runs. Foundry is pinned to `v1.7.1`. Dependency versions and full Git
+commits are documented in the [dependency policy](docs/DEPENDENCY_POLICY.md).
+
+## How Etherdoc works
+
+### 1. Prepare content
+
+Hash the exact file bytes with SHA-256 and upload those same bytes through the canonical IPFS
+profile. Etherdoc performs no line-ending, Unicode, text-encoding, archive, PDF-metadata, or EXIF
+normalization.
+
+Accepted retrieval references are CIDv1, lowercase unpadded base32, without an `ipfs://` prefix:
+
+- `raw` (`0x55`) with a 32-byte SHA2-256 multihash equal to the file digest; or
+- `dag-pb` (`0x70`) with an independent 32-byte SHA2-256 DAG-root digest.
+
+Privacy-sensitive documents must be encrypted before upload. The registered digest then commits to
+the ciphertext, while encryption keys remain off-chain. Follow the pin-confirmation, retention, and
+recovery requirements in the [IPFS and content integrity policy](docs/IPFS_POLICY.md).
+
+### 2. Register a record
+
+An authorized issuer registers directly, or a relayer submits an EIP-712 authorization signed by
+the issuer. A record stores:
+
+- the raw-file content digest and canonical CID;
+- decoded CID codec and multihash digest;
+- an optional `bytes32` metadata commitment;
+- issuer, source chain ID, and timestamps;
+- schema version, record version, status, and supersession links.
+
+The stable identity is derived from the issuer and exact file bytes:
+
+```solidity
+documentId = keccak256(abi.encode(issuer, contentDigest));
+```
+
+Changing a filename, MIME type, gateway, or IPFS DAG layout does not change the document ID.
+Changing one file byte does, and two issuers can independently attest to the same bytes.
+
+### 3. Dispatch selected state
+
+An operator quotes the LINK fee and dispatches each configured destination separately:
+
+```solidity
+uint256 fee = sender.quoteFee(documentId, destinationChainSelector);
+bytes32 messageId = sender.dispatchDocument(
+    documentId,
+    destinationChainSelector,
+    maximumFee
+);
+```
+
+`maximumFee` bounds the race between quoting and mining. A failed lane does not erase successful
+lanes, and a router failure writes no dispatch record, so the operator can requote and retry.
+
+### 4. Receive and verify
+
+The destination authenticates the source selector and sender before decoding the payload. A
+verifier then:
+
+1. reads the source record or destination receipt;
+2. downloads the exact bytes through the recorded CID;
+3. calculates SHA-256 locally;
+4. calls `verifyDocument(documentId, calculatedDigest)`; and
+5. separately evaluates issuer trust and the current lifecycle status.
+
+The EVM cannot download IPFS content, so on-chain verification compares caller-supplied digest data
+only.
+
+## Document lifecycle
+
+Every registration starts at version 1 with status `ACTIVE`. An issuer can make exactly one terminal
+transition:
+
+```text
+REGISTER v1 / ACTIVE
+├── REVOKE v2 / REVOKED
+└── SUPERSEDE v2 / SUPERSEDED ──> new REGISTER v1 / ACTIVE
+```
+
+Revocation increments the version without deleting provenance. Supersession links both the old
+terminal record and the new active record. Revoked and superseded records remain queryable and
+cannot be reactivated.
+
+Removing an issuer blocks new registration and supersession, but deliberately preserves that
+issuer's ability to revoke its historical records. Governance cannot rewrite or revoke another
+issuer's record.
+
+Relayed registration, revocation, and supersession use the EIP-712 domain `Etherdoc`, version `2`,
+the current chain ID, and the sender address. Each authorization includes an issuer-scoped monotonic
+nonce and deadline, and a successful operation consumes the nonce.
+
+## Contracts and public API
+
+| Contract | Responsibility |
+| --- | --- |
+| `EtherdocSender` | Canonical records, issuer signatures, lifecycle, remote configuration, fee quotes, dispatch history, and LINK treasury recovery |
+| `EtherdocReceiver` | Trusted-source authentication, CCIP receipt processing, replay protection, replicated records, and destination verification |
+| `EtherdocGovernance` | Two-step ownership and separated operator/pauser role checks |
+| `EtherdocTypes` | Shared records, lifecycle operations, canonical CID codec, and compact CCIP payload conversion |
+
+### Common write operations
+
+| Actor | Sender operation | Purpose |
+| --- | --- | --- |
+| Issuer | `registerDocument(...)` | Register a raw digest, CID, and optional metadata commitment |
+| Relayer | `registerDocumentBySig(...)` | Submit an issuer-signed registration |
+| Issuer or relayer | `revokeDocument(...)`, `revokeDocumentBySig(...)` | Permanently revoke an active record |
+| Issuer or relayer | `supersedeDocument(...)`, `supersedeDocumentBySig(...)` | Link an old record to a replacement |
+| Operator | `dispatchDocument(...)` | Send one record version to one configured destination |
+| Governance | `configureRemote(...)` | Set the destination receiver and `uint32` callback gas policy |
+
+Receiver governance uses `configureTrustedRemote(...)` to authorize an exact source selector/sender
+pair. Pausers can stop registration, dispatch, or receive independently; only governance can
+unpause.
+
+### Common reads and integration events
+
+- `getDocument`, `isDocumentRegistered`, `isDocumentActive`, and `verifyDocument` expose source
+  state.
+- `quoteFee`, `getRemoteConfig`, `getDispatch`, and `getDispatchAtVersion` expose lane and dispatch
+  state.
+- `getReceipt`, `isDocumentReceived`, `isMessageProcessed`, and `getMessageDocument` expose
+  destination evidence.
+- `DocumentRegistered` and `DocumentStatusChanged` describe canonical lifecycle changes.
+- `MessageSent`, `MessageReceived`, and `MessageIgnored` reconcile asynchronous delivery and replay.
+
+Integrators should index `(documentId, version, destinationChainSelector)`, not only `documentId`.
+Source status `DISPATCHED` proves only that the Router accepted a message; destination delivery
+requires the receiver event/receipt and CCIP status.
+
+## Roles and emergency controls
+
+| Principal | Authority |
+| --- | --- |
+| Governance owner | Manage issuers and roles, configure remotes, withdraw treasury tokens, unpause, and initiate two-step ownership transfer |
+| Issuer | Register, revoke, or supersede its own records |
+| Operator | Dispatch already configured records; fee quotes remain public |
+| Pauser | Pause its assigned registration, dispatch, or receive subsystem |
+| Relayer | Submit valid issuer signatures without receiving a privileged on-chain role |
+
+Production owners must be reviewed multisig contracts supplied explicitly at deployment. The
+deployer receives no implicit governance or issuer authority. Deployment scripts reject a
+production network configured with direct EOA governance.
+
+A receive pause deliberately reverts CCIP execution without marking the message processed, allowing
+the same message ID to be manually executed after recovery. Registration pause still permits
+issuer-authorized revocation. Resume destination receive before source dispatch.
+
+Contracts are intentionally non-upgradeable. Logic or payload changes require new deployments and
+explicit remote rotation. See the [governance and emergency pause runbook](docs/GOVERNANCE_RUNBOOK.md)
+for role rotation, multisig requirements, and incident recovery.
+
+## Trust and verification model
+
+Etherdoc is an issuer registry, not a legal identity provider. Source governance maintains the
+authorized address set; off-chain consumers must map those addresses to real organizations and
+decide whether each organization is trusted for the document type.
+
+Verification terms intentionally remain separate:
+
+- **Integrity**: SHA-256 of downloaded bytes equals the stored `contentDigest`.
+- **Existence and timestamping**: a record was registered at `registeredAt` on `sourceChainId`.
+- **Authenticity**: the source contract accepted the record from an authorized issuer, directly or
+  through a valid signature. This is only as strong as the off-chain issuer mapping.
+- **Validity**: the current status is `ACTIVE`; terminal records remain queryable but are invalid.
+- **Replication**: a trusted receiver accepted a specific source version; this does not create a
+  new independent issuer attestation.
+
+`verifyDocument` returns the full record, a digest-match result, and current validity. It does not
+collapse integrity, identity trust, legal meaning, and lifecycle into one “authentic” boolean.
+
+## Cross-chain behavior and failure model
+
+CCIP replication is asynchronous and non-atomic. Dispatching to multiple chains is an off-chain
+orchestrated workflow with one transaction and one monitor per destination.
+
+Etherdoc uses a fixed 448-byte `DocumentPayload` schema version 3. It transmits provenance once and
+represents the CID as compact `(codec, multihashDigest)` metadata. The receiver reconstructs the
+canonical CID and document ID deterministically. Older payload schemas are intentionally
+incompatible. The exact layout and benchmark are in the [payload schema](docs/PAYLOAD_SCHEMA.md).
+
+Every outbound message uses CCIP 2.0 `GenericExtraArgsV3` with:
+
+- `WAIT_FOR_FINALITY_FLAG`;
+- an empty CCV list selecting the default CommitteeVerifier;
+- `address(0)` selecting the default executor; and
+- a per-remote `uint32` callback gas limit.
+
+Etherdoc does not enable faster-than-finality, custom CCVs, custom executors, token transfers, native
+fee payment, or `NO_EXECUTION_TAG`. CCIP execution remains permissionless even with the default
+executor, so verified failed messages can be manually executed.
+
+The sender is treasury-funded in LINK and never pulls fees from issuers or relayers. Governance can
+recover excess ERC-20 balances, but operators should retain enough LINK for pending dispatches.
+
+The receiver records every successfully handled message ID. Exact redelivery and distinct messages
+carrying equal or older record versions are ignored idempotently. Invalid messages revert so CCIP
+retains failure evidence and the same message ID can be recovered. After Router acceptance, recover
+that message rather than sending a duplicate payload. Follow the
+[CCIP recovery runbook](docs/CCIP_RECOVERY_RUNBOOK.md).
+
+## Network configuration and deployment
+
+The checked-in example topology is Mantle Sepolia as source and Ink Sepolia as destination. Router,
+LINK, selector, gas, explorer, RPC alias, governance mode, and Directory verification timestamp are
+read from [`config/networks/testnet.json`](config/networks/testnet.json); scripts contain no embedded
+network addresses.
+
+The example is not a published Etherdoc deployment. CCIP lane support can change, so revalidate both
+official Directory entries before a production-like deployment:
+
+- [Mantle Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia-mantle-1)
+- [Ink Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ink-testnet-sepolia)
+
+Record the completed check by updating `directoryVerifiedAt` in the network config.
+
+Copy the environment template and replace every placeholder:
+
+```shell
+cp .env-example .env
+
+set -a
+source .env
+set +a
+```
+
+Never commit `.env`, RPC secrets, API keys, plaintext production keys, or signing credentials. Use
+an encrypted Foundry account or hardware wallet for broadcasts. Before deployment, set
+`GOVERNANCE`, `INITIAL_ISSUER`, `OPERATOR`, and `PAUSER` explicitly. The source constructor uses all
+four roles; the destination constructor uses governance and pauser.
+
+Deploy the destination and source separately from a clean, committed worktree:
+
+```shell
+NETWORK=inkSepolia RPC_URL="$INK_SEPOLIA_RPC_URL" \
+  bash script/deploy-contract.sh receiver --account deployer
+
+NETWORK=mantleSepolia RPC_URL="$MANTLE_SEPOLIA_RPC_URL" \
+  bash script/deploy-contract.sh sender --account deployer
+```
+
+Then configure both sides of the lane:
+
+```shell
+SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia CONFIGURE_TARGET=RECEIVER \
+  forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
+    --rpc-url ink_sepolia --broadcast --account governance
+
+SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia CONFIGURE_TARGET=SENDER \
+  forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
+    --rpc-url mantle_sepolia --broadcast --account governance
+```
+
+Fund the sender to a target LINK balance before dispatch:
+
+```shell
+NETWORK=mantleSepolia TREASURY_ACTION=FUND \
+TARGET_LINK_BALANCE="$TARGET_LINK_BALANCE" \
+  forge script script/ManageEtherdocTreasury.s.sol:ManageEtherdocTreasuryScript \
+    --rpc-url mantle_sepolia --broadcast --account funder
+```
+
+Deployment runs create receipt-backed address books and manifests under `deployments/`. Reruns
+verify and reuse existing state. Configuration, target-balance funding, and retention-based
+withdrawal also become no-ops when the desired state already holds. Production multisig operations
+emit Safe Transaction Builder proposals instead of impersonating the owner.
+
+The complete preflight rules, funding, verification, manifest schema, and Safe workflow are in
+[Deployment and configuration](docs/DEPLOYMENT.md).
+
+## Development and testing
+
+Run formatting, lint, deterministic tests, CI-strength fuzz/invariants, and repository checks:
+
+```shell
 forge fmt --check
 forge lint --deny warnings src script test
+forge test -vv
+FOUNDRY_PROFILE=ci forge test -vv
 bash script/check-coverage.sh
 bash script/check-contract-sizes.sh
 bash script/check-gas-snapshot.sh
@@ -191,86 +374,12 @@ bash script/ci-deployment-dry-run.sh
 bash script/test-deployment-workflow.sh
 ```
 
-Chainlink versions, exact commits, remapping rationale, and the upgrade gate are documented in the
-[dependency policy](docs/DEPENDENCY_POLICY.md).
+Coverage enforces 100% line, statement, branch, and function coverage for `src/`. Size budgets remain
+below EIP-170/EIP-3860 limits, and gas snapshots use a reviewed tolerance. Ordinary tests are
+deterministic and RPC-independent.
 
-## Network configuration and deployment
-
-Deployment scripts do not contain network addresses or chain selectors. They load one
-`NetworkConfig` per chain from `NETWORK_CONFIG_PATH` and load generated Etherdoc addresses from
-`DEPLOYMENT_DIR/<network>.json`. The checked-in testnet example uses Mantle Sepolia as source and Ink
-Sepolia as destination with LINK fee payment.
-
-The lane and Router/LINK values in `config/networks/testnet.json` were last verified on
-**2026-07-19** against the official CCIP Directory. Both configured Routers accept ExtraArgs V3
-quotes in fork tests. The Directory currently labels Mantle Sepolia → Ink Sepolia as lane `1.6.0`
-and Ink Sepolia → Mantle Sepolia as `2.0.0`; contract package version, Router capability, and lane
-version are tracked separately:
-
-- [Mantle Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia-mantle-1)
-- [Ink Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ink-testnet-sepolia)
-
-CCIP network support can change. Recheck both Directory pages and update `directoryVerifiedAt`
-before a production-like deployment.
-
-Copy `.env-example` to `.env`, provide both RPC URLs, and load it into the shell. Deploy and
-configure are deliberately separate. Set `GOVERNANCE` to the production multisig plus explicit
-`INITIAL_ISSUER`, `OPERATOR`, and `PAUSER` addresses before source deployment; receiver deployment
-uses `GOVERNANCE` and `PAUSER`. Use encrypted Foundry accounts or a hardware wallet, never a
-plaintext production key:
-
-```shell
-set -a
-source .env
-set +a
-
-# Destination deployment plus receipt-backed manifest
-NETWORK=inkSepolia RPC_URL="$INK_SEPOLIA_RPC_URL" \
-  bash script/deploy-contract.sh receiver --account deployer
-
-# Source deployment plus receipt-backed manifest
-NETWORK=mantleSepolia RPC_URL="$MANTLE_SEPOLIA_RPC_URL" \
-  bash script/deploy-contract.sh sender --account deployer
-
-# Configure the destination to accept the source deployment
-SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia CONFIGURE_TARGET=RECEIVER \
-  forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
-    --rpc-url ink_sepolia --broadcast --account governance
-
-# Configure the source lane and destination receiver
-SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia CONFIGURE_TARGET=SENDER \
-  forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
-    --rpc-url mantle_sepolia --broadcast --account governance
-```
-
-Successful deployment runs write generated address books and role-specific manifests under
-`deployments/testnet/`. The manifests reconcile chain ID/selector, address, creation transaction,
-block timestamp, runtime code hash, Git commit, compiler settings, and constructor arguments. A
-rerun verifies and reuses the existing deployment without sending a transaction. Remote
-configuration, target-balance funding, and retention-based withdrawal are also no-ops when their
-desired state already holds.
-
-Every deploy/configure command performs preflight validation before broadcasting:
-
-- the connected RPC chain ID must match its config;
-- the local Router, LINK token when required, and Etherdoc deployment must have bytecode;
-- the source Router must report the destination selector as supported;
-- remote Router, sender, and receiver bytecode is checked through the configured remote RPC alias;
-- the configured destination gas limit, receiver, and trust pair are compared before any write;
-- missing deployment artifacts and unsupported fee modes fail with explicit custom errors.
-
-The current sender pays fees in LINK. Setting `feeMode` to `NATIVE` is rejected until native fee
-payment is implemented in the contract. Production configs must use
-`production: true` with `governanceMode: "MULTISIG"`; direct production governance is rejected and
-configuration/withdrawal commands emit idempotent Safe Transaction Builder proposals rather than
-impersonating the contract owner. Verification is available through
-`script/verify-contract.sh sender|receiver`.
-
-The complete operational commands, manifest schema, treasury targets, Safe proposal flow, and
-verification options are documented in [Deployment and configuration](docs/DEPLOYMENT.md).
-
-The optional fork tests verify Router/LINK bytecode, lane support, and live V3 quotes in both
-directions:
+Provide both testnet RPC URLs to exercise both directions of the optional fork checks; they never
+broadcast:
 
 ```shell
 MANTLE_SEPOLIA_RPC_URL=<rpc-url> \
@@ -278,6 +387,18 @@ INK_SEPOLIA_RPC_URL=<rpc-url> \
   forge test --match-path test/CCIPV2Fork.t.sol -vv
 ```
 
-Each direction is reported as skipped when its corresponding RPC is absent. The full unit,
-negative, fuzz, invariant, fork, coverage, and scheduled live-E2E strategy is documented in
-[Testing](docs/TESTING.md).
+Each direction reports a clear skip when its RPC is absent. See [Testing](docs/TESTING.md) for suite
+boundaries, Slither, fork behavior, and the protected scheduled testnet E2E workflow.
+
+## Documentation map
+
+| Document | Contents |
+| --- | --- |
+| [IPFS policy](docs/IPFS_POLICY.md) | CID canonicalization, exact-byte hashing, pinning, privacy, retention, and verifier behavior |
+| [Payload schema](docs/PAYLOAD_SCHEMA.md) | Schema-v3 layout, CID reconstruction, compatibility policy, and encoding benchmark |
+| [Deployment](docs/DEPLOYMENT.md) | Manifests, remote configuration, LINK treasury, Safe proposals, and explorer verification |
+| [Governance runbook](docs/GOVERNANCE_RUNBOOK.md) | Role matrix, multisig policy, rotation, pause, unpause, and redeployment |
+| [CCIP recovery runbook](docs/CCIP_RECOVERY_RUNBOOK.md) | Monitoring, failed execution triage, manual execution, and lane recovery |
+| [Dependency policy](docs/DEPENDENCY_POLICY.md) | Exact commits, remappings, compiler/toolchain pins, and upgrade gates |
+| [Testing](docs/TESTING.md) | Unit, fuzz, invariant, integration, fork, coverage, static analysis, and live E2E strategy |
+| [Codebase audit TODO](docs/TODO_CODEBASE_AUDIT.md) | Completed invariants, external integration notes, and future contract work |
