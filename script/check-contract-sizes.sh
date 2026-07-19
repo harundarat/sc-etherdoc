@@ -5,7 +5,8 @@ readonly EIP170_RUNTIME_LIMIT=24576
 readonly EIP3860_INITCODE_LIMIT=49152
 readonly SIZE_CONFIG="${SIZE_CONFIG:-config/ci/contract-sizes.json}"
 
-forge build --sizes
+# Lint-only artifacts can omit bytecode while still making an incremental build look current.
+forge build --sizes --force
 
 while IFS= read -r entry; do
   contract="$(jq -r '.contract' <<<"$entry")"
