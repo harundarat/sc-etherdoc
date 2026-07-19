@@ -13,6 +13,7 @@ import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocReceiver} from "../src/EtherdocReceiver.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 import {MockLinkToken} from "./mocks/MockLinkToken.sol";
+import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
 
 contract CCIPV2RouterHarness is IRouterClient {
     using SafeERC20 for IERC20;
@@ -130,5 +131,25 @@ contract Integration is Test {
         assertEq(receipt.sender, address(etherdocSender));
         assertEq(receipt.receivedAt, block.timestamp);
         assertEq(uint8(receipt.status), uint8(EtherdocReceiver.ReceiptStatus.RECEIVED));
+    }
+
+    function test_sendAndReceiveDagPbReconstructsCanonicalCID() external {
+        bytes32 contentDigest = sha256("dag-pb file bytes");
+        bytes32 cidDigest = sha256("dag-pb root block");
+        string memory documentCID = CIDTestHelper.cidForDigest(0x70, cidDigest);
+
+        bytes32 documentId = etherdocSender.registerDocument(contentDigest, documentCID);
+        bytes32 messageId = etherdocSender.dispatchDocument(
+            documentId,
+            router.DESTINATION_CHAIN_SELECTOR(),
+            etherdocSender.quoteFee(documentId, router.DESTINATION_CHAIN_SELECTOR())
+        );
+
+        EtherdocReceiver.ReceiptRecord memory receipt = etherdocReceiver.getReceipt(documentId);
+        assertNotEq(messageId, bytes32(0));
+        assertEq(receipt.document.documentCID, documentCID);
+        assertEq(receipt.document.contentDigest, contentDigest);
+        assertEq(receipt.document.cidCodec, 0x70);
+        assertEq(receipt.document.cidDigest, cidDigest);
     }
 }
