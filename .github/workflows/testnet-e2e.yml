@@ -16,7 +16,7 @@ jobs:
   mantle-to-ink:
     if: ${{ vars.CCIP_E2E_ENABLED == 'true' }}
     name: Mantle Sepolia to Ink Sepolia
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: testnet-e2e
     env:

@@ -5,13 +5,21 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FOUNDRY_PROFILE: ci
 
 jobs:
-  check:
-    name: Foundry project
-    runs-on: ubuntu-latest
+  quality:
+    name: Format, lint, build, and coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -32,16 +40,30 @@ jobs:
           test "$(forge config --json | jq -r '.optimizer_runs')" = "200"
 
       - name: Run Forge fmt
-        run: |
-          forge fmt --check
-        id: fmt
+        run: forge fmt --check
+
+      - name: Run Forge lint
+        run: forge lint --deny warnings src script test
 
       - name: Run Forge build
-        run: |
-          forge build --sizes
-        id: build
+        run: forge build --sizes
+
+      - name: Enforce source coverage
+        run: bash script/check-coverage.sh
+
+  test:
+    name: Unit, fuzz, invariant, and integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1.9.0
+        with:
+          version: v1.7.1
 
       - name: Run Forge tests
-        run: |
-          forge test -vvv
-        id: test
+        run: forge test -vvv
