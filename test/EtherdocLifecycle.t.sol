@@ -3,12 +3,15 @@ pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {IAny2EVMMessageReceiver} from "@chainlink/contracts-ccip/contracts/interfaces/IAny2EVMMessageReceiver.sol";
+import {IAny2EVMMessageReceiverV2} from "@chainlink/contracts-ccip/contracts/interfaces/IAny2EVMMessageReceiverV2.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
-import {LinkToken} from "@chainlink/local/src/shared/LinkToken.sol";
+import {FinalityCodec} from "@chainlink/contracts-ccip/contracts/libraries/FinalityCodec.sol";
+import {IERC165} from "@openzeppelin/contracts@5.3.0/utils/introspection/IERC165.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocReceiver} from "../src/EtherdocReceiver.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
+import {MockLinkToken} from "./mocks/MockLinkToken.sol";
 import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
 
 contract DeferredRouter is IRouterClient {
@@ -136,7 +139,7 @@ contract EtherdocLifecycleTest is Test {
     string private constant DOCUMENT_CID = "bafkreihtcfumm6quqltuzol6ybawkcqzhqmkjoyii7lfnktqob7hftkotu";
 
     DeferredRouter private s_router;
-    LinkToken private s_link;
+    MockLinkToken private s_link;
     EtherdocSender private s_sender;
     EtherdocReceiver private s_receiverA;
     EtherdocReceiver private s_receiverB;
@@ -145,7 +148,7 @@ contract EtherdocLifecycleTest is Test {
 
     function setUp() public {
         s_router = new DeferredRouter();
-        s_link = new LinkToken();
+        s_link = new MockLinkToken();
         s_sender = new EtherdocSender(
             address(s_router), address(s_link), address(this), address(this), address(this), address(this)
         );
@@ -533,6 +536,27 @@ contract EtherdocLifecycleTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidRemoteSender.selector, address(0)));
         s_receiverA.configureTrustedRemote(sourceChainSelector, address(0), true);
+    }
+
+    function test_receiverSupportsV1V2AndERC165Interfaces() external view {
+        assertTrue(s_receiverA.supportsInterface(type(IAny2EVMMessageReceiver).interfaceId));
+        assertTrue(s_receiverA.supportsInterface(type(IAny2EVMMessageReceiverV2).interfaceId));
+        assertTrue(s_receiverA.supportsInterface(type(IERC165).interfaceId));
+        assertFalse(s_receiverA.supportsInterface(bytes4(0xffffffff)));
+    }
+
+    function test_receiverUsesDefaultCCVAndRequiresFullFinality() external view {
+        (
+            address[] memory requiredCCVs,
+            address[] memory optionalCCVs,
+            uint8 optionalThreshold,
+            bytes4 allowedFinalityConfig
+        ) = s_receiverA.getCCVsAndFinalityConfig(s_sourceChainSelector, abi.encode(address(s_sender)));
+
+        assertEq(requiredCCVs.length, 0);
+        assertEq(optionalCCVs.length, 0);
+        assertEq(optionalThreshold, 0);
+        assertEq(allowedFinalityConfig, FinalityCodec.WAIT_FOR_FINALITY_FLAG);
     }
 
     function _allowReceiver(EtherdocReceiver _receiver) private {

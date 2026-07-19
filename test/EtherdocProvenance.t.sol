@@ -2,10 +2,10 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {LinkToken} from "@chainlink/local/src/shared/LinkToken.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 import {MockRouter} from "./EtherdocSender.t.sol";
+import {MockLinkToken} from "./mocks/MockLinkToken.sol";
 import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
 
 contract EtherdocProvenanceTest is Test {
@@ -21,7 +21,7 @@ contract EtherdocProvenanceTest is Test {
 
     function setUp() public {
         MockRouter router = new MockRouter();
-        LinkToken link = new LinkToken();
+        MockLinkToken link = new MockLinkToken();
         s_sender = new EtherdocSender(
             address(router), address(link), address(this), address(this), address(this), address(this)
         );

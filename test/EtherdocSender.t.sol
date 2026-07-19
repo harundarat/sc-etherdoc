@@ -4,12 +4,14 @@ pragma solidity 0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
-import {LinkToken} from "@chainlink/local/src/shared/LinkToken.sol";
-import {SafeERC20} from "@openzeppelin/contracts@5.0.2/token/ERC20/utils/SafeERC20.sol";
+import {ExtraArgsCodec} from "@chainlink/contracts-ccip/contracts/libraries/ExtraArgsCodec.sol";
+import {FinalityCodec} from "@chainlink/contracts-ccip/contracts/libraries/FinalityCodec.sol";
+import {SafeERC20} from "@openzeppelin/contracts@5.3.0/token/ERC20/utils/SafeERC20.sol";
 import {EtherdocGovernance} from "../src/EtherdocGovernance.sol";
 import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 import {ApprovalRestrictedToken} from "./mocks/ApprovalRestrictedToken.sol";
+import {MockLinkToken} from "./mocks/MockLinkToken.sol";
 import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
 
 contract MockRouter is IRouterClient {
@@ -20,8 +22,10 @@ contract MockRouter is IRouterClient {
     uint256 private s_nonce;
     mapping(uint64 destinationChainSelector => bool shouldFail) private s_failingLanes;
     mapping(uint64 destinationChainSelector => address receiver) private s_lastReceivers;
-    mapping(uint64 destinationChainSelector => uint256 gasLimit) private s_lastGasLimits;
-    mapping(uint64 destinationChainSelector => bool allowOutOfOrderExecution) private s_lastOutOfOrderPolicies;
+    mapping(uint64 destinationChainSelector => uint32 gasLimit) private s_lastGasLimits;
+    mapping(uint64 destinationChainSelector => bytes4 finalityConfig) private s_lastFinalityConfigs;
+    mapping(uint64 destinationChainSelector => uint256 ccvCount) private s_lastCCVCounts;
+    mapping(uint64 destinationChainSelector => address executor) private s_lastExecutors;
 
     function setLaneFailure(uint64 _destinationChainSelector, bool _shouldFail) external {
         s_failingLanes[_destinationChainSelector] = _shouldFail;
@@ -48,12 +52,13 @@ contract MockRouter is IRouterClient {
             revert SimulatedLaneFailure(_destinationChainSelector);
         }
 
-        bytes calldata extraArgs = _message.extraArgs;
-        require(bytes4(extraArgs[:4]) == Client.GENERIC_EXTRA_ARGS_V2_TAG, "unexpected extra args");
-        (uint256 gasLimit, bool allowOutOfOrderExecution) = abi.decode(extraArgs[4:], (uint256, bool));
+        ExtraArgsCodec.GenericExtraArgsV3 memory extraArgs =
+            ExtraArgsCodec._decodeGenericExtraArgsV3(_message.extraArgs);
         s_lastReceivers[_destinationChainSelector] = abi.decode(_message.receiver, (address));
-        s_lastGasLimits[_destinationChainSelector] = gasLimit;
-        s_lastOutOfOrderPolicies[_destinationChainSelector] = allowOutOfOrderExecution;
+        s_lastGasLimits[_destinationChainSelector] = extraArgs.gasLimit;
+        s_lastFinalityConfigs[_destinationChainSelector] = extraArgs.requestedFinalityConfig;
+        s_lastCCVCounts[_destinationChainSelector] = extraArgs.ccvs.length;
+        s_lastExecutors[_destinationChainSelector] = extraArgs.executor;
 
         s_nonce++;
         return keccak256(abi.encode(_destinationChainSelector, _message.receiver, _message.data, s_nonce));
@@ -63,33 +68,53 @@ contract MockRouter is IRouterClient {
         return s_lastReceivers[_destinationChainSelector];
     }
 
-    function lastGasLimit(uint64 _destinationChainSelector) external view returns (uint256) {
+    function lastGasLimit(uint64 _destinationChainSelector) external view returns (uint32) {
         return s_lastGasLimits[_destinationChainSelector];
     }
 
-    function lastOutOfOrderPolicy(uint64 _destinationChainSelector) external view returns (bool) {
-        return s_lastOutOfOrderPolicies[_destinationChainSelector];
+    function lastFinalityConfig(uint64 _destinationChainSelector) external view returns (bytes4) {
+        return s_lastFinalityConfigs[_destinationChainSelector];
+    }
+
+    function lastCCVCount(uint64 _destinationChainSelector) external view returns (uint256) {
+        return s_lastCCVCounts[_destinationChainSelector];
+    }
+
+    function lastExecutor(uint64 _destinationChainSelector) external view returns (address) {
+        return s_lastExecutors[_destinationChainSelector];
+    }
+}
+
+contract ExtraArgsCodecHarness {
+    function encode(ExtraArgsCodec.GenericExtraArgsV3 memory _extraArgs) external pure returns (bytes memory) {
+        return ExtraArgsCodec._encodeGenericExtraArgsV3(_extraArgs);
+    }
+
+    function decode(bytes calldata _extraArgs) external pure returns (ExtraArgsCodec.GenericExtraArgsV3 memory) {
+        return ExtraArgsCodec._decodeGenericExtraArgsV3(_extraArgs);
     }
 }
 
 contract EtherdocSenderTest is Test {
     uint64 private constant DESTINATION_A = 11;
     uint64 private constant DESTINATION_B = 22;
-    uint256 private constant GAS_LIMIT_A = 350_000;
-    uint256 private constant GAS_LIMIT_B = 600_000;
+    uint32 private constant GAS_LIMIT_A = 350_000;
+    uint32 private constant GAS_LIMIT_B = 600_000;
     address private constant RECEIVER_A = address(0xA11CE);
     address private constant RECEIVER_B = address(0xB0B);
     bytes32 private constant DOCUMENT_DIGEST = 0x43cc23fa52b87b4cc1d02b5b114154151d6adddb17c9fddc06b027fa99e24008;
     string private constant DOCUMENT_CID = "bafkreicdzqr7uuvypngmdubllmiucvavdvvn3wyxzh65ybvqe75jtysaba";
 
     MockRouter private s_router;
-    LinkToken private s_link;
+    ExtraArgsCodecHarness private s_extraArgsCodec;
+    MockLinkToken private s_link;
     EtherdocSender private s_sender;
     bytes32 private s_documentId;
 
     function setUp() public {
         s_router = new MockRouter();
-        s_link = new LinkToken();
+        s_extraArgsCodec = new ExtraArgsCodecHarness();
+        s_link = new MockLinkToken();
         s_sender = _deploySender(address(s_link));
 
         assertTrue(s_link.transfer(address(s_sender), 100 ether));
@@ -196,8 +221,12 @@ contract EtherdocSenderTest is Test {
         assertEq(s_router.lastReceiver(DESTINATION_B), RECEIVER_B);
         assertEq(s_router.lastGasLimit(DESTINATION_A), GAS_LIMIT_A);
         assertEq(s_router.lastGasLimit(DESTINATION_B), GAS_LIMIT_B);
-        assertTrue(s_router.lastOutOfOrderPolicy(DESTINATION_A));
-        assertTrue(s_router.lastOutOfOrderPolicy(DESTINATION_B));
+        assertEq(s_router.lastFinalityConfig(DESTINATION_A), FinalityCodec.WAIT_FOR_FINALITY_FLAG);
+        assertEq(s_router.lastFinalityConfig(DESTINATION_B), FinalityCodec.WAIT_FOR_FINALITY_FLAG);
+        assertEq(s_router.lastCCVCount(DESTINATION_A), 0);
+        assertEq(s_router.lastCCVCount(DESTINATION_B), 0);
+        assertEq(s_router.lastExecutor(DESTINATION_A), address(0));
+        assertEq(s_router.lastExecutor(DESTINATION_B), address(0));
     }
 
     function test_onlyOperatorCanDispatch() external {
@@ -370,7 +399,7 @@ contract EtherdocSenderTest is Test {
 
     function test_configureRemoteRotatesReceiverAndGasLimitWithEvent() external {
         address rotatedReceiver = makeAddr("rotated-receiver");
-        uint256 rotatedGasLimit = 700_000;
+        uint32 rotatedGasLimit = 700_000;
 
         vm.expectEmit(true, true, false, true);
         emit EtherdocSender.RemoteConfigUpdated(DESTINATION_A, rotatedReceiver, rotatedGasLimit, true);
@@ -395,6 +424,42 @@ contract EtherdocSenderTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.InvalidGasLimit.selector, uint256(0)));
         s_sender.configureRemote(DESTINATION_A, RECEIVER_A, 0, true);
+
+        bytes memory overflowCall = abi.encodeWithSelector(
+            bytes4(keccak256("configureRemote(uint64,address,uint32,bool)")),
+            DESTINATION_A,
+            RECEIVER_A,
+            uint256(type(uint32).max) + 1,
+            true
+        );
+        (bool success,) = address(s_sender).call(overflowCall);
+        assertFalse(success);
+    }
+
+    function test_extraArgsV3KnownAnswerRoundTripUsesFullFinalityAndDefaults() external view {
+        ExtraArgsCodec.GenericExtraArgsV3 memory expected = ExtraArgsCodec.GenericExtraArgsV3({
+            gasLimit: GAS_LIMIT_A,
+            requestedFinalityConfig: FinalityCodec.WAIT_FOR_FINALITY_FLAG,
+            ccvs: new address[](0),
+            ccvArgs: new bytes[](0),
+            executor: address(0),
+            executorArgs: "",
+            tokenReceiver: "",
+            tokenArgs: ""
+        });
+
+        bytes memory encoded = s_extraArgsCodec.encode(expected);
+        assertEq(encoded, hex"a69dd4aa000557300000000000000000000000");
+
+        ExtraArgsCodec.GenericExtraArgsV3 memory decoded = s_extraArgsCodec.decode(encoded);
+        assertEq(decoded.gasLimit, GAS_LIMIT_A);
+        assertEq(decoded.requestedFinalityConfig, FinalityCodec.WAIT_FOR_FINALITY_FLAG);
+        assertEq(decoded.ccvs.length, 0);
+        assertEq(decoded.ccvArgs.length, 0);
+        assertEq(decoded.executor, address(0));
+        assertEq(decoded.executorArgs.length, 0);
+        assertEq(decoded.tokenReceiver.length, 0);
+        assertEq(decoded.tokenArgs.length, 0);
     }
 
     function test_dispatchRejectsDisabledRemote() external {
