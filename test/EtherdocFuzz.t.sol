@@ -173,6 +173,16 @@ contract EtherdocFuzzTest is Test {
         s_sender.registerDocument(_contentDigest, string(malformedCID));
     }
 
+    function testFuzz_compactCIDRoundTrips(bool _dagPb, bytes32 _cidDigest) external pure {
+        uint8 codec = _dagPb ? 0x70 : 0x55;
+        string memory documentCID = EtherdocTypes.encodeCanonicalCID(codec, _cidDigest);
+        (bool valid, uint8 decodedCodec, bytes32 decodedDigest) = EtherdocTypes.decodeCanonicalCID(documentCID);
+
+        assertTrue(valid);
+        assertEq(decodedCodec, codec);
+        assertEq(decodedDigest, _cidDigest);
+    }
+
     function testFuzz_receiverAcceptsBoundedCanonicalPayload(
         bytes32 _messageId,
         bytes32 _contentDigest,
@@ -182,7 +192,7 @@ contract EtherdocFuzzTest is Test {
         vm.assume(_messageId != bytes32(0) && _contentDigest != bytes32(0) && _issuer != address(0));
         EtherdocTypes.DocumentRecord memory document = _makeDocument(_contentDigest, _metadataCommitment, _issuer);
         bytes memory data = abi.encode(_payload(document));
-        assertLe(data.length, s_receiver.MAX_PAYLOAD_LENGTH());
+        assertEq(data.length, s_receiver.PAYLOAD_LENGTH());
 
         s_deferredRouter.deliverRaw(address(s_receiver), _messageId, SOURCE_SELECTOR, REMOTE_SENDER, data);
 
@@ -195,12 +205,12 @@ contract EtherdocFuzzTest is Test {
 
     function testFuzz_receiverRejectsPayloadAboveBound(uint16 _excess) external {
         uint256 excess = bound(uint256(_excess), 1, 4_096);
-        bytes memory oversized = new bytes(s_receiver.MAX_PAYLOAD_LENGTH() + excess);
+        bytes memory oversized = new bytes(s_receiver.PAYLOAD_LENGTH() + excess);
         bytes32 messageId = keccak256(abi.encode(_excess));
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                EtherdocReceiver.InvalidPayloadLength.selector, oversized.length, s_receiver.MAX_PAYLOAD_LENGTH()
+                EtherdocReceiver.InvalidPayloadLength.selector, oversized.length, s_receiver.PAYLOAD_LENGTH()
             )
         );
         s_deferredRouter.deliverRaw(address(s_receiver), messageId, SOURCE_SELECTOR, REMOTE_SENDER, oversized);
@@ -246,7 +256,7 @@ contract EtherdocFuzzTest is Test {
             registeredAt: uint64(block.timestamp),
             updatedAt: uint64(block.timestamp),
             version: 1,
-            schemaVersion: 2,
+            schemaVersion: 3,
             status: EtherdocTypes.DocumentStatus.ACTIVE,
             supersedes: bytes32(0),
             supersededBy: bytes32(0)
@@ -258,13 +268,7 @@ contract EtherdocFuzzTest is Test {
         pure
         returns (EtherdocTypes.DocumentPayload memory)
     {
-        return EtherdocTypes.DocumentPayload({
-            schemaVersion: 2,
-            operation: EtherdocTypes.Operation.REGISTER,
-            documentId: _record.documentId,
-            documentVersion: 1,
-            document: _record
-        });
+        return EtherdocTypes.payloadFor(_record, EtherdocTypes.Operation.REGISTER);
     }
 
     function _sign(uint256 _privateKey, bytes32 _digest) private pure returns (bytes memory) {

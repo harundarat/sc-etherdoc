@@ -267,7 +267,7 @@ contract EtherdocNegativeTest is Test {
             metadataCommitment,
             block.chainid,
             uint64(block.timestamp),
-            2
+            3
         );
         s_sender.registerDocument(digest, documentCID, metadataCommitment);
 
@@ -350,13 +350,18 @@ contract EtherdocReceiverNegativeTest is Test {
     function test_rejectsEmptyAndMalformedAbiPayloadWithoutMarkingMessage() external {
         bytes32 emptyMessageId = keccak256("empty");
         vm.expectRevert(
-            abi.encodeWithSelector(EtherdocReceiver.InvalidPayloadLength.selector, 0, s_receiver.MAX_PAYLOAD_LENGTH())
+            abi.encodeWithSelector(EtherdocReceiver.InvalidPayloadLength.selector, 0, s_receiver.PAYLOAD_LENGTH())
         );
         s_router.deliverRaw(address(s_receiver), emptyMessageId, SOURCE_SELECTOR, s_remoteSender, "");
 
         bytes32 malformedMessageId = keccak256("malformed");
-        vm.expectRevert();
-        s_router.deliverRaw(address(s_receiver), malformedMessageId, SOURCE_SELECTOR, s_remoteSender, hex"01020304");
+        bytes memory truncatedPayload = new bytes(s_receiver.PAYLOAD_LENGTH() - 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EtherdocReceiver.InvalidPayloadLength.selector, truncatedPayload.length, s_receiver.PAYLOAD_LENGTH()
+            )
+        );
+        s_router.deliverRaw(address(s_receiver), malformedMessageId, SOURCE_SELECTOR, s_remoteSender, truncatedPayload);
 
         assertFalse(s_receiver.isMessageProcessed(emptyMessageId));
         assertFalse(s_receiver.isMessageProcessed(malformedMessageId));
@@ -406,12 +411,13 @@ contract EtherdocReceiverNegativeTest is Test {
     function test_rejectsInvalidDocumentIntegrityAndCommitmentFields() external {
         EtherdocTypes.DocumentRecord memory document = s_document;
         document.contentDigest = bytes32(0);
-        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidContentDigest.selector, document.documentId));
+        bytes32 zeroContentDocumentId = _documentId(document.issuer, bytes32(0));
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidContentDigest.selector, zeroContentDocumentId));
         _deliver(keccak256("zero-content"), document, EtherdocTypes.Operation.REGISTER);
 
         document = s_document;
-        document.cidCodec = 0x70;
-        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidCIDMetadata.selector, document.documentId));
+        document.cidCodec = 0x71;
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.UnsupportedCIDCodec.selector, uint8(0x71)));
         _deliver(keccak256("wrong-codec"), document, EtherdocTypes.Operation.REGISTER);
 
         document = s_document;
@@ -426,17 +432,11 @@ contract EtherdocReceiverNegativeTest is Test {
 
         document = s_document;
         document.issuer = address(0);
+        bytes32 zeroIssuerDocumentId = _documentId(address(0), document.contentDigest);
         vm.expectRevert(
-            abi.encodeWithSelector(EtherdocReceiver.InvalidDocumentCommitment.selector, document.documentId)
+            abi.encodeWithSelector(EtherdocReceiver.InvalidDocumentCommitment.selector, zeroIssuerDocumentId)
         );
         _deliver(keccak256("zero-issuer"), document, EtherdocTypes.Operation.REGISTER);
-
-        document = s_document;
-        document.documentId = keccak256("wrong-document-id");
-        vm.expectRevert(
-            abi.encodeWithSelector(EtherdocReceiver.InvalidDocumentCommitment.selector, document.documentId)
-        );
-        _deliver(keccak256("wrong-commitment"), document, EtherdocTypes.Operation.REGISTER);
     }
 
     function test_rejectsInvalidDocumentVersionAndTimestamps() external {
@@ -562,13 +562,7 @@ contract EtherdocReceiverNegativeTest is Test {
         pure
         returns (EtherdocTypes.DocumentPayload memory)
     {
-        return EtherdocTypes.DocumentPayload({
-            schemaVersion: 2,
-            operation: _operation,
-            documentId: _document.documentId,
-            documentVersion: _document.version,
-            document: _document
-        });
+        return EtherdocTypes.payloadFor(_document, _operation);
     }
 
     function _validDocument(string memory _content) private returns (EtherdocTypes.DocumentRecord memory) {
@@ -586,7 +580,7 @@ contract EtherdocReceiverNegativeTest is Test {
             registeredAt: uint64(block.timestamp),
             updatedAt: uint64(block.timestamp),
             version: 1,
-            schemaVersion: 2,
+            schemaVersion: 3,
             status: EtherdocTypes.DocumentStatus.ACTIVE,
             supersedes: bytes32(0),
             supersededBy: bytes32(0)

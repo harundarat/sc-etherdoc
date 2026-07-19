@@ -70,7 +70,7 @@ contract EtherdocSenderTest is Test {
         assertEq(document.registeredAt, block.timestamp);
         assertEq(document.updatedAt, block.timestamp);
         assertEq(document.version, 1);
-        assertEq(document.schemaVersion, 2);
+        assertEq(document.schemaVersion, 3);
         assertEq(uint8(document.status), uint8(EtherdocTypes.DocumentStatus.ACTIVE));
 
         vm.expectRevert(abi.encodeWithSelector(EtherdocSender.DocumentAlreadyRegistered.selector, s_documentId));

@@ -9,7 +9,7 @@ import {EtherdocTypes} from "./EtherdocTypes.sol";
 contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
     uint16 public constant PAYLOAD_SCHEMA_VERSION = EtherdocTypes.SCHEMA_VERSION;
     uint256 public constant CANONICAL_CID_LENGTH = EtherdocTypes.CANONICAL_CID_LENGTH;
-    uint256 public constant MAX_PAYLOAD_LENGTH = EtherdocTypes.MAX_PAYLOAD_LENGTH;
+    uint256 public constant PAYLOAD_LENGTH = EtherdocTypes.PAYLOAD_LENGTH;
 
     enum ReceiptStatus {
         NOT_RECEIVED,
@@ -31,14 +31,11 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
     error InvalidSourceChainSelector(uint64 sourceChainSelector);
     error InvalidRemoteSender(address sender);
     error UntrustedRemote(uint64 sourceChainSelector, address sender);
-    error InvalidPayloadLength(uint256 actualLength, uint256 maximumLength);
-    error InvalidPayloadSchema(uint16 payloadSchemaVersion, uint16 documentSchemaVersion);
-    error InvalidPayloadDocumentId(bytes32 payloadDocumentId, bytes32 documentId);
-    error InvalidPayloadVersion(uint64 payloadVersion, uint64 documentVersion);
+    error InvalidPayloadLength(uint256 actualLength, uint256 expectedLength);
+    error InvalidPayloadSchema(uint16 payloadSchemaVersion);
     error InvalidPayloadOperation(EtherdocTypes.Operation operation, EtherdocTypes.DocumentStatus status);
     error InvalidContentDigest(bytes32 documentId);
-    error InvalidDocumentCID();
-    error InvalidCIDMetadata(bytes32 documentId);
+    error UnsupportedCIDCodec(uint8 cidCodec);
     error RawCIDContentDigestMismatch(bytes32 contentDigest, bytes32 cidDigest);
     error InvalidDocumentCommitment(bytes32 documentId);
     error InvalidDocumentVersion(bytes32 documentId);
@@ -154,13 +151,12 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
             emit MessageIgnored(message.messageId, processedDocumentId, storedVersion, storedVersion, true);
             return;
         }
-        if (message.data.length == 0 || message.data.length > EtherdocTypes.MAX_PAYLOAD_LENGTH) {
-            revert InvalidPayloadLength(message.data.length, EtherdocTypes.MAX_PAYLOAD_LENGTH);
+        if (message.data.length != EtherdocTypes.PAYLOAD_LENGTH) {
+            revert InvalidPayloadLength(message.data.length, EtherdocTypes.PAYLOAD_LENGTH);
         }
 
         EtherdocTypes.DocumentPayload memory payload = abi.decode(message.data, (EtherdocTypes.DocumentPayload));
-        _validatePayload(payload);
-        EtherdocTypes.DocumentRecord memory document = payload.document;
+        EtherdocTypes.DocumentRecord memory document = _validatePayload(payload);
 
         ReceiptRecord storage existingReceipt = s_receipts[document.documentId];
         if (existingReceipt.status == ReceiptStatus.RECEIVED) {
@@ -244,21 +240,20 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
         isActive = document.status == EtherdocTypes.DocumentStatus.ACTIVE;
     }
 
-    function _validatePayload(EtherdocTypes.DocumentPayload memory _payload) private pure {
-        if (
-            _payload.schemaVersion != EtherdocTypes.SCHEMA_VERSION
-                || _payload.document.schemaVersion != EtherdocTypes.SCHEMA_VERSION
-        ) {
-            revert InvalidPayloadSchema(_payload.schemaVersion, _payload.document.schemaVersion);
+    function _validatePayload(EtherdocTypes.DocumentPayload memory _payload)
+        private
+        pure
+        returns (EtherdocTypes.DocumentRecord memory document)
+    {
+        if (_payload.schemaVersion != EtherdocTypes.SCHEMA_VERSION) {
+            revert InvalidPayloadSchema(_payload.schemaVersion);
         }
-        if (_payload.documentId != _payload.document.documentId) {
-            revert InvalidPayloadDocumentId(_payload.documentId, _payload.document.documentId);
+        if (!EtherdocTypes.isSupportedCIDCodec(_payload.cidCodec)) {
+            revert UnsupportedCIDCodec(_payload.cidCodec);
         }
-        if (_payload.documentVersion != _payload.document.version) {
-            revert InvalidPayloadVersion(_payload.documentVersion, _payload.document.version);
-        }
-        _validateOperation(_payload.operation, _payload.document);
-        _validateDocument(_payload.document);
+        document = EtherdocTypes.documentFromPayload(_payload);
+        _validateOperation(_payload.operation, document);
+        _validateDocument(document);
     }
 
     function _validateOperation(EtherdocTypes.Operation _operation, EtherdocTypes.DocumentRecord memory _document)
@@ -292,15 +287,8 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
         if (_document.contentDigest == bytes32(0)) {
             revert InvalidContentDigest(_document.documentId);
         }
-        (bool validCID, uint8 cidCodec, bytes32 cidDigest) = EtherdocTypes.decodeCanonicalCID(_document.documentCID);
-        if (!validCID) {
-            revert InvalidDocumentCID();
-        }
-        if (_document.cidCodec != cidCodec || _document.cidDigest != cidDigest) {
-            revert InvalidCIDMetadata(_document.documentId);
-        }
-        if (cidCodec == EtherdocTypes.CID_CODEC_RAW && cidDigest != _document.contentDigest) {
-            revert RawCIDContentDigestMismatch(_document.contentDigest, cidDigest);
+        if (_document.cidCodec == EtherdocTypes.CID_CODEC_RAW && _document.cidDigest != _document.contentDigest) {
+            revert RawCIDContentDigestMismatch(_document.contentDigest, _document.cidDigest);
         }
         bytes32 expectedDocumentId = EtherdocTypes.documentId(_document.issuer, _document.contentDigest);
         if (_document.issuer == address(0) || _document.documentId != expectedDocumentId) {

@@ -55,12 +55,14 @@ contract EtherdocLifecycleTest is Test {
         assertEq(uint8(document.status), uint8(EtherdocTypes.DocumentStatus.ACTIVE));
         assertEq(dispatch.messageId, messageId);
         assertEq(uint8(dispatch.status), uint8(EtherdocSender.DispatchStatus.DISPATCHED));
-        assertEq(payload.schemaVersion, 2);
+        assertEq(payload.schemaVersion, 3);
         assertEq(uint8(payload.operation), uint8(EtherdocTypes.Operation.REGISTER));
-        assertEq(payload.documentId, s_documentId);
-        assertEq(payload.documentVersion, 1);
-        assertEq(payload.document.documentId, s_documentId);
-        assertEq(payload.document.documentCID, DOCUMENT_CID);
+        assertEq(payload.contentDigest, DOCUMENT_DIGEST);
+        assertEq(payload.cidCodec, 0x55);
+        assertEq(payload.cidDigest, DOCUMENT_DIGEST);
+        assertEq(payload.version, 1);
+        assertEq(EtherdocTypes.documentFromPayload(payload).documentId, s_documentId);
+        assertEq(EtherdocTypes.documentFromPayload(payload).documentCID, DOCUMENT_CID);
         assertEq(receipt.messageId, bytes32(0));
         assertEq(uint8(receipt.status), uint8(EtherdocReceiver.ReceiptStatus.NOT_RECEIVED));
         assertFalse(s_receiverA.isDocumentReceived(s_documentId));
@@ -275,13 +277,11 @@ contract EtherdocLifecycleTest is Test {
     function test_receiverRejectsOversizedPayload() external {
         _allowReceiver(s_receiverA);
         bytes32 messageId = keccak256("oversized-payload");
-        bytes memory oversizedPayload = new bytes(s_receiverA.MAX_PAYLOAD_LENGTH() + 1);
+        bytes memory oversizedPayload = new bytes(s_receiverA.PAYLOAD_LENGTH() + 1);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                EtherdocReceiver.InvalidPayloadLength.selector,
-                oversizedPayload.length,
-                s_receiverA.MAX_PAYLOAD_LENGTH()
+                EtherdocReceiver.InvalidPayloadLength.selector, oversizedPayload.length, s_receiverA.PAYLOAD_LENGTH()
             )
         );
         s_router.deliverRaw(address(s_receiverA), messageId, s_sourceChainSelector, address(s_sender), oversizedPayload);
@@ -292,24 +292,23 @@ contract EtherdocLifecycleTest is Test {
     function test_receiverRejectsEnvelopeWithMismatchedOperationAndVersion() external {
         _allowReceiver(s_receiverA);
         EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(s_documentId);
-        EtherdocTypes.DocumentPayload memory payload = EtherdocTypes.DocumentPayload({
-            schemaVersion: 2,
-            operation: EtherdocTypes.Operation.REVOKE,
-            documentId: document.documentId,
-            documentVersion: document.version + 1,
-            document: document
-        });
+        EtherdocTypes.DocumentPayload memory payload =
+            EtherdocTypes.payloadFor(document, EtherdocTypes.Operation.REGISTER);
+        payload.version = document.version + 1;
 
         bytes32 operationMessageId = keccak256("invalid-operation");
         vm.expectRevert(
             abi.encodeWithSelector(
-                EtherdocReceiver.InvalidPayloadVersion.selector, payload.documentVersion, document.version
+                EtherdocReceiver.InvalidPayloadOperation.selector,
+                EtherdocTypes.Operation.REGISTER,
+                EtherdocTypes.DocumentStatus.ACTIVE
             )
         );
         _deliverPayload(operationMessageId, payload);
         assertFalse(s_receiverA.isMessageProcessed(operationMessageId));
 
-        payload.documentVersion = document.version;
+        payload.version = document.version;
+        payload.operation = EtherdocTypes.Operation.REVOKE;
         vm.expectRevert(
             abi.encodeWithSelector(
                 EtherdocReceiver.InvalidPayloadOperation.selector,
@@ -319,49 +318,37 @@ contract EtherdocLifecycleTest is Test {
         );
         _deliverPayload(operationMessageId, payload);
         assertFalse(s_receiverA.isMessageProcessed(operationMessageId));
-
-        payload.operation = EtherdocTypes.Operation.REGISTER;
-        payload.documentId = bytes32(uint256(123));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                EtherdocReceiver.InvalidPayloadDocumentId.selector, payload.documentId, document.documentId
-            )
-        );
-        _deliverPayload(operationMessageId, payload);
-        assertFalse(s_receiverA.isMessageProcessed(operationMessageId));
     }
 
-    function test_receiverRejectsUnsupportedSchemaAndMalformedCID() external {
+    function test_receiverRejectsUnsupportedSchemaAndCIDCodec() external {
         _allowReceiver(s_receiverA);
         EtherdocTypes.DocumentRecord memory document = s_sender.getDocument(s_documentId);
-        EtherdocTypes.DocumentPayload memory payload = EtherdocTypes.DocumentPayload({
-            schemaVersion: 3,
-            operation: EtherdocTypes.Operation.REGISTER,
-            documentId: document.documentId,
-            documentVersion: document.version,
-            document: document
-        });
+        EtherdocTypes.DocumentPayload memory payload =
+            EtherdocTypes.payloadFor(document, EtherdocTypes.Operation.REGISTER);
+        payload.schemaVersion = 4;
 
         bytes32 schemaMessageId = keccak256("invalid-schema");
-        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidPayloadSchema.selector, uint16(3), uint16(2)));
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidPayloadSchema.selector, uint16(4)));
         _deliverPayload(schemaMessageId, payload);
 
-        payload.schemaVersion = 2;
-        payload.document.documentCID = "";
-        bytes32 emptyCIDMessageId = keccak256("empty-cid");
-        vm.expectRevert(EtherdocReceiver.InvalidDocumentCID.selector);
-        _deliverPayload(emptyCIDMessageId, payload);
+        payload.schemaVersion = 3;
+        payload.cidCodec = 0x71;
+        bytes32 unsupportedCodecMessageId = keccak256("unsupported-cid-codec");
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.UnsupportedCIDCodec.selector, uint8(0x71)));
+        _deliverPayload(unsupportedCodecMessageId, payload);
 
-        payload.document.documentCID = DOCUMENT_CID;
-        payload.document.cidDigest = sha256("conflicting CID metadata");
-        bytes32 metadataMessageId = keccak256("invalid-cid-metadata");
+        payload.cidCodec = 0x55;
+        payload.cidDigest = sha256("conflicting CID metadata");
+        bytes32 metadataMessageId = keccak256("raw-cid-digest-mismatch");
         vm.expectRevert(
-            abi.encodeWithSelector(EtherdocReceiver.InvalidCIDMetadata.selector, payload.document.documentId)
+            abi.encodeWithSelector(
+                EtherdocReceiver.RawCIDContentDigestMismatch.selector, payload.contentDigest, payload.cidDigest
+            )
         );
         _deliverPayload(metadataMessageId, payload);
 
         assertFalse(s_receiverA.isMessageProcessed(schemaMessageId));
-        assertFalse(s_receiverA.isMessageProcessed(emptyCIDMessageId));
+        assertFalse(s_receiverA.isMessageProcessed(unsupportedCodecMessageId));
         assertFalse(s_receiverA.isMessageProcessed(metadataMessageId));
     }
 

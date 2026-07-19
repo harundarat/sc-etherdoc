@@ -58,7 +58,7 @@ contract EtherdocProvenanceTest is Test {
         assertEq(document.registeredAt, block.timestamp);
         assertEq(document.updatedAt, block.timestamp);
         assertEq(document.version, 1);
-        assertEq(document.schemaVersion, 2);
+        assertEq(document.schemaVersion, 3);
         assertEq(uint8(document.status), uint8(EtherdocTypes.DocumentStatus.ACTIVE));
         assertEq(s_sender.issuerNonce(s_issuer), 1);
 

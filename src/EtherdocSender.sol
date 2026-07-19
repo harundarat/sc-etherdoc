@@ -392,23 +392,24 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
         EtherdocTypes.DocumentRecord memory _document,
         EtherdocTypes.Operation _operation
     ) private view returns (Client.EVM2AnyMessage memory evm2AnyMessage) {
-        EtherdocTypes.DocumentPayload memory payload = EtherdocTypes.DocumentPayload({
-            schemaVersion: EtherdocTypes.SCHEMA_VERSION,
-            operation: _operation,
-            documentId: _document.documentId,
-            documentVersion: _document.version,
-            document: _document
-        });
         evm2AnyMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(_remote.receiver),
-            // The strict 59-byte CID profile makes the schema-v2 ABI payload a fixed size below MAX_PAYLOAD_LENGTH.
-            data: abi.encode(payload),
+            // Schema v3 sends compact CID metadata and omits fields the receiver can derive.
+            data: _encodePayload(_document, _operation),
             tokenAmounts: new Client.EVMTokenAmount[](0),
             extraArgs: ExtraArgsCodec._getBasicEncodedExtraArgsV3(
                 _remote.gasLimit, FinalityCodec.WAIT_FOR_FINALITY_FLAG
             ),
             feeToken: address(i_linkToken)
         });
+    }
+
+    function _encodePayload(EtherdocTypes.DocumentRecord memory _document, EtherdocTypes.Operation _operation)
+        private
+        pure
+        returns (bytes memory)
+    {
+        return abi.encode(EtherdocTypes.payloadFor(_document, _operation));
     }
 
     /**
