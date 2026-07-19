@@ -112,3 +112,6 @@ jobs:
 
       - name: Simulate sender and receiver deployment
         run: bash script/ci-deployment-dry-run.sh
+
+      - name: Test idempotent deployment workflow on Anvil
+        run: bash script/test-deployment-workflow.sh
