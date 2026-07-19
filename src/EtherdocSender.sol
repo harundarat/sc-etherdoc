@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.24;
+pragma solidity 0.8.36;
 
 import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
@@ -732,6 +732,8 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         bytes32 _structHash,
         bytes calldata _signature
     ) private {
+        // Signature expiry intentionally follows chain time; small validator skew does not grant issuer authority.
+        // forge-lint: disable-next-line(block-timestamp)
         if (_deadline < block.timestamp) {
             revert SignatureExpired(_deadline);
         }

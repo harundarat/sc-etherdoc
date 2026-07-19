@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.24;
+pragma solidity 0.8.36;
 
 library EtherdocTypes {
     uint16 internal constant SCHEMA_VERSION = 2;

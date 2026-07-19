@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.24;
+pragma solidity 0.8.36;
 
 import {console} from "forge-std/Script.sol";
 import {EtherdocReceiver} from "../src/EtherdocReceiver.sol";
