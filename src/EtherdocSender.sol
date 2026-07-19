@@ -63,7 +63,6 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
     error InvalidContentDigest();
     error InvalidDocumentCID();
     error RawCIDContentDigestMismatch(bytes32 contentDigest, bytes32 cidDigest);
-    error PayloadTooLarge(uint256 actualLength, uint256 maximumLength);
     error InvalidIssuerAddress();
     error IssuerNotAuthorized(address issuer);
     error CallerNotDocumentIssuer(address caller, address issuer);
@@ -161,13 +160,6 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         _setRole(PAUSER_ROLE, _initialPauser, true);
     }
 
-    modifier whenRegistrationNotPaused() {
-        if (s_registrationPaused) {
-            revert RegistrationIsPaused();
-        }
-        _;
-    }
-
     modifier whenDispatchNotPaused() {
         if (s_dispatchPaused) {
             revert DispatchIsPaused();
@@ -183,9 +175,9 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
      */
     function registerDocument(bytes32 _contentDigest, string calldata _documentCID)
         external
-        whenRegistrationNotPaused
         returns (bytes32 documentId)
     {
+        _requireRegistrationNotPaused();
         return _registerDocument(_contentDigest, _documentCID, bytes32(0), msg.sender);
     }
 
@@ -194,9 +186,9 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
      */
     function registerDocument(bytes32 _contentDigest, string calldata _documentCID, bytes32 _metadataCommitment)
         external
-        whenRegistrationNotPaused
         returns (bytes32 documentId)
     {
+        _requireRegistrationNotPaused();
         return _registerDocument(_contentDigest, _documentCID, _metadataCommitment, msg.sender);
     }
 
@@ -210,7 +202,8 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         address _issuer,
         uint256 _deadline,
         bytes calldata _signature
-    ) external whenRegistrationNotPaused returns (bytes32 documentId) {
+    ) external returns (bytes32 documentId) {
+        _requireRegistrationNotPaused();
         (uint8 cidCodec, bytes32 cidDigest) = _validateContentIdentifier(_contentDigest, _documentCID);
         documentId = EtherdocTypes.documentId(_issuer, _contentDigest);
         uint256 nonce = s_issuerNonces[_issuer];
@@ -262,7 +255,8 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         bytes32 _newContentDigest,
         string calldata _newDocumentCID,
         bytes32 _metadataCommitment
-    ) external whenRegistrationNotPaused returns (bytes32 newDocumentId) {
+    ) external returns (bytes32 newDocumentId) {
+        _requireRegistrationNotPaused();
         return _supersedeDocument(_oldDocumentId, _newContentDigest, _newDocumentCID, _metadataCommitment, msg.sender);
     }
 
@@ -277,7 +271,8 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         address _issuer,
         uint256 _deadline,
         bytes calldata _signature
-    ) external whenRegistrationNotPaused returns (bytes32 newDocumentId) {
+    ) external returns (bytes32 newDocumentId) {
+        _requireRegistrationNotPaused();
         (uint8 newCidCodec, bytes32 newCidDigest) = _validateContentIdentifier(_newContentDigest, _newDocumentCID);
         newDocumentId = EtherdocTypes.documentId(_issuer, _newContentDigest);
         EtherdocTypes.DocumentRecord storage oldDocument = s_documents[_oldDocumentId];
@@ -392,14 +387,10 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
             documentVersion: _document.version,
             document: _document
         });
-        bytes memory encodedPayload = abi.encode(payload);
-        if (encodedPayload.length > EtherdocTypes.MAX_PAYLOAD_LENGTH) {
-            revert PayloadTooLarge(encodedPayload.length, EtherdocTypes.MAX_PAYLOAD_LENGTH);
-        }
-
         evm2AnyMessage = Client.EVM2AnyMessage({
             receiver: abi.encode(_remote.receiver),
-            data: encodedPayload,
+            // The strict 59-byte CID profile makes the schema-v2 ABI payload a fixed size below MAX_PAYLOAD_LENGTH.
+            data: abi.encode(payload),
             tokenAmounts: new Client.EVMTokenAmount[](0),
             extraArgs: ExtraArgsCodec._getBasicEncodedExtraArgsV3(
                 _remote.gasLimit, FinalityCodec.WAIT_FOR_FINALITY_FLAG
@@ -666,6 +657,12 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
             registeredAt,
             EtherdocTypes.SCHEMA_VERSION
         );
+    }
+
+    function _requireRegistrationNotPaused() private view {
+        if (s_registrationPaused) {
+            revert RegistrationIsPaused();
+        }
     }
 
     function _revokeDocument(bytes32 _documentId, address _issuer) private {

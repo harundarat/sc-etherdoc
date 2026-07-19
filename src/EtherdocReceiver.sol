@@ -42,7 +42,6 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
     error RawCIDContentDigestMismatch(bytes32 contentDigest, bytes32 cidDigest);
     error InvalidDocumentCommitment(bytes32 documentId);
     error InvalidDocumentVersion(bytes32 documentId);
-    error InvalidDocumentTransition(bytes32 documentId, uint64 currentVersion, uint64 incomingVersion);
     error ConflictingDocumentProvenance(bytes32 documentId);
     error ConflictingDocumentState(bytes32 documentId, uint64 version);
     error ReceiveIsPaused();
@@ -172,16 +171,6 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
                     message.messageId, document.documentId, document.version, existingReceipt.document.version, false
                 );
                 return;
-            }
-            if (existingReceipt.document.status != EtherdocTypes.DocumentStatus.ACTIVE) {
-                revert InvalidDocumentTransition(
-                    document.documentId, existingReceipt.document.version, document.version
-                );
-            }
-            if (document.version != existingReceipt.document.version + 1) {
-                revert InvalidDocumentTransition(
-                    document.documentId, existingReceipt.document.version, document.version
-                );
             }
         }
 

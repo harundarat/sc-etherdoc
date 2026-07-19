@@ -84,9 +84,6 @@ library EtherdocTypes {
             bitCount += 5;
             if (bitCount >= 8) {
                 bitCount -= 8;
-                if (outputIndex >= decoded.length) {
-                    return (false, 0, bytes32(0));
-                }
                 // The shift leaves exactly one decoded byte.
                 // forge-lint: disable-next-line(unsafe-typecast)
                 decoded[outputIndex] = bytes1(uint8(accumulator >> bitCount));
