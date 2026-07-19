@@ -163,6 +163,20 @@ git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
+The supported toolchain is Foundry **v1.7.1**, recorded in `.foundry-version`. Install that exact
+release instead of a floating `stable` build:
+
+```shell
+foundryup --install "$(cat .foundry-version)"
+forge --version
+```
+
+All application, script, and test sources compile with Solidity **0.8.36**, target the **Paris** EVM,
+and use the optimizer with **200 runs**. These settings live in `foundry.toml`; the Paris target
+matches the CCIP 2.0 contract build target and avoids accidentally emitting newer opcodes on a
+heterogeneous cross-chain lane. CI uses the same versions and raises fuzz runs through its explicit
+`ci` profile.
+
 ```shell
 forge build
 forge test

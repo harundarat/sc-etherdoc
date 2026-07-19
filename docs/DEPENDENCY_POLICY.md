@@ -17,7 +17,7 @@ git submodule update --init --recursive
 | `@chainlink/contracts-ccip` | `contracts-ccip-v2.0.0` | `c2c125c27f056db2e98d21501922b6eff5750f36` |
 | `@chainlink/contracts` | `contracts-v1.5.0` | `86aa5a1d34b20eda8d18fe6eb0e4882948e545ba` |
 | `@openzeppelin/contracts` | `v5.3.0` | `e4f70216d759d8e6a64144a9e1f7bbeed78e7079` |
-| `forge-std` | `v1.9.7` | `77041d2ce690e692d6e03cc812b57d1ddaa4d505` |
+| `forge-std` | `v1.16.2` | `bf647bd6046f2f7da30d0c2bf435e5c76a780c1b` |
 
 Chainlink CCIP, Chainlink Contracts, OpenZeppelin, and forge-std are direct root submodules.
 Chainlink Local and its nested CCIP 1.6.2 checkout are intentionally absent. Root remappings resolve
@@ -39,6 +39,29 @@ This is a clean cutover. Etherdoc has no mainnet deployment, persisted contract 
 message that needs v1 compatibility. Old deployment artifacts and CCIP 1.x messages are not
 accepted as migration inputs.
 
+## Compiler and Foundry toolchain
+
+The application build is reproducible at these exact settings:
+
+| Tool/setting | Pinned value |
+|---|---|
+| Foundry | `v1.7.1` (`4072e48705af9d93e3c0f6e29e93b5e9a40caed8`) |
+| Solidity | `0.8.36` (`8a079791d9cca7a6c03fd6a8429b93aa3bddefed`) |
+| EVM target | `paris` |
+| Optimizer | enabled, 200 runs, non-IR pipeline |
+| `foundry-toolchain` action | `b00af27efadbc7b4ca8b82abbd903b17cc874d2a` (`v1.9.0`) |
+| `actions/checkout` | `34e114876b0b11c390a56381ad16ebd13914f8d5` (`v4.3.1`) |
+
+`.foundry-version` is the local source of truth for the Foundry release. CI installs the same exact
+release and asserts that the installed `forge` version matches the file. `foundry.toml` pins the
+compiler, EVM target, optimizer, and optimizer runs for every profile; the CI profile only increases
+fuzz and invariant effort.
+
+Paris is deliberate even though Solidity supports newer targets. It matches the upstream CCIP 2.0
+Foundry configuration and avoids emitting chain-specific newer opcodes while Etherdoc spans
+heterogeneous EVM networks. Compiler warnings originating in pinned `lib/` dependencies are excluded
+from application output; warnings from `src/`, `script/`, and `test/` remain visible.
+
 ## Update requirements
 
 Dependency changes must be submitted for review and must not auto-merge. A change must:
@@ -48,7 +71,8 @@ Dependency changes must be submitted for review and must not auto-merge. A chang
 3. inspect release notes and diffs for interface, storage, event, fee, verifier, executor, finality,
    and message-format changes;
 4. verify each target lane and Router against the current CCIP Directory;
-5. run `forge fmt --check`, `forge build --sizes`, and the complete `forge test -vv` suite;
+5. run `forge fmt --check`, `forge build --sizes`, and the complete `forge test -vv` suite using the
+   Foundry version in `.foundry-version`;
 6. exercise `test/Integration.t.sol` and the optional live Router fork test; and
 7. use new deployments and controlled remote rotation for any incompatible CCIP or storage change.
 

@@ -405,15 +405,15 @@ test.
 
 | Komponen | Kondisi repo/lokal | Versi tersedia saat review | Penilaian |
 |---|---|---|---|
-| Solidity | pragma exact `0.8.24` | `0.8.36` | Tertinggal; upgrade bertahap dan review breaking/compiler changes |
-| Foundry | lokal `1.5.1`; CI tidak pin binary | `1.7.1` | Build lokal/CI tidak reproducible |
-| `forge-std` | commit `77041d...`, versi `1.9.7` | `1.16.2` | Dipin dengan baik tetapi tertinggal |
+| Solidity | pragma/config exact `0.8.36`; EVM `paris` | `0.8.36` | Current dan reproducible |
+| Foundry | `.foundry-version` dan CI exact `1.7.1` | `1.7.1` | Lokal/CI selaras |
+| `forge-std` | commit `bf647bd...`, versi `1.16.2` | `1.16.2` | Current dan dipin |
 | `@chainlink/contracts-ccip` | commit `c2c125c...`, versi `2.0.0` | `2.0.0` | Migrasi selesai; direct root submodule |
 | `@chainlink/local` | dihapus | `0.2.9` | Simulator 1.x dan nested CCIP 1.6.2 tidak dipakai |
-| `@chainlink/contracts` | commit `86aa5a1...`, versi `1.5.0` | `1.5.0` | Selaras dengan matrix Local |
+| `@chainlink/contracts` | commit `86aa5a1...`, versi `1.5.0` | `1.5.0` | Selaras dengan matrix CCIP 2.0 |
 | `@openzeppelin/contracts` | commit `e4f7021...`, versi `5.3.0` | `5.3.0` | Direct root submodule |
-| `actions/checkout` | `@v4` | `v7.0.0` | Major lama dan hanya pin tag |
-| `foundry-toolchain` action | `@v1`, tanpa input versi Foundry | action `v1.9.0` | Action dan binary Foundry sama-sama tidak immutable |
+| `actions/checkout` | commit `34e1148...` (`v4.3.1`) | `v7.0.0` | Major lama, tetapi supply-chain ref immutable |
+| `foundry-toolchain` action | commit `b00af27...` (`v1.9.0`); Foundry `v1.7.1` | action `v1.9.0` | Action dan binary immutable |
 
 ### [x] P1-08 Hilangkan version skew Chainlink
 
@@ -482,11 +482,10 @@ interface baru. Jangan mengubah dependency lalu menganggap kontrak lama setara.
 - Known-answer codec, overflow gas, V1/V2 interface, policy receiver, lifecycle, failure/retry,
   Router harness E2E, dan optional fork coverage ditambahkan.
 
-### [ ] P1-10 Pin compiler, EVM target, optimizer, dan Foundry secara eksplisit
+### [x] P1-10 Pin compiler, EVM target, optimizer, dan Foundry secara eksplisit
 
-**Bukti terkini:** `foundry.toml` sudah mengaktifkan optimizer dengan 200 runs untuk menjaga ukuran
-sender hasil P1-05 di bawah EIP-170, tetapi belum menetapkan compiler atau EVM version. EVM target
-efektif masih bergantung pada versi Foundry; pada mesin review awal terbaca `prague`. CI menggunakan
+**Bukti awal (sudah stale):** `foundry.toml` hanya mengaktifkan optimizer dengan 200 runs tanpa
+compiler atau EVM version. EVM target efektif bergantung pada versi Foundry dan CI mengambil
 floating Foundry stable melalui `foundry-rs/foundry-toolchain@v1`.
 
 **TODO:**
@@ -498,6 +497,28 @@ floating Foundry stable melalui `foundry-rs/foundry-toolchain@v1`.
 - Tambahkan `[profile.ci]` yang nyata atau hapus `FOUNDRY_PROFILE=ci` yang menyesatkan.
 - Setelah upgrade compiler, jalankan seluruh test, bytecode-size diff, gas diff, dan deployment
   simulation.
+
+**Implementasi (2026-07-19):**
+
+- Seluruh source aplikasi, script, dan test dinaikkan ke pragma exact Solidity `0.8.36`;
+  `foundry.toml` memaksa compiler yang sama, target EVM `paris`, optimizer aktif, dan 200 runs.
+  Target Paris mengikuti konfigurasi upstream CCIP 2.0 dan mencegah compiler mengeluarkan opcode
+  hardfork baru secara tidak sengaja pada lane lintas EVM yang heterogen.
+- Foundry dipin ke `v1.7.1` melalui `.foundry-version`. CI memasang release exact tersebut memakai
+  `foundry-toolchain` `v1.9.0` pada full commit SHA dan memverifikasi versi hasil instalasi.
+  `actions/checkout` juga dipin ke full SHA `v4.3.1`.
+- Profile `ci` sekarang nyata: tetap mewarisi seluruh build setting production, dengan fuzz runs
+  1.024 serta invariant runs/depth 512/500. `FOUNDRY_PROFILE=ci` tidak lagi sekadar label kosong.
+- `forge-std` dinaikkan ke `v1.16.2` karena compiler baru memperlihatkan warning kompatibilitas pada
+  versi 1.9.7. Warning dari dependency `lib/` yang dipin dipisahkan, sedangkan warning Etherdoc tetap
+  terlihat.
+- `forge fmt --check`, build bersih, dan 57 test lulus (0 gagal, 1 optional fork skip tanpa RPC)
+  pada profile default maupun `ci`. Fork Mantle live juga lulus untuk support Ink dan quote V3.
+- Runtime sender berubah 18.601 → 19.007 byte (+406; margin EIP-170 5.569 byte), sedangkan receiver
+  11.585 → 11.827 byte (+242). Deployment gas report berubah 4.198.779 → 4.281.280 untuk sender dan
+  2.617.714 → 2.667.117 untuk receiver. Average dispatch hanya berubah 425.787 → 425.919 gas.
+- Dry-run `EtherdocSenderScript` terhadap RPC Mantle Sepolia chain ID 5003 berhasil melakukan
+  preflight serta simulasi deployment tanpa broadcast; estimasi total script 5.611.953 gas.
 
 ---
 
@@ -687,7 +708,7 @@ rotation yang eksplisit.
 
 - [x] Selaraskan dependency Chainlink tanpa version skew.
 - [x] Hapus Chainlink Local dan simulator CCIP 1.x.
-- [ ] Pin Foundry/compiler/EVM/optimizer.
+- [x] Pin Foundry/compiler/EVM/optimizer.
 - [x] Evaluasi dan migrasikan CCIP 2.0.
 - [x] Review gas, bytecode, ABI, dan deployment migration.
 
