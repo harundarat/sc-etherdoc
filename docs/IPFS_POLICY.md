@@ -47,9 +47,10 @@ chunker, raw-leaves setting, CID version, hash algorithm, and directory wrapping
 operational metadata, not part of `documentId`. Re-importing the same file with different DAG
 options may produce a different CID while preserving the same `contentDigest`.
 
-Schema version 2 and the EIP-712 registration/supersession signatures bind the file digest, decoded
-CID codec, decoded CID multihash digest, and metadata commitment. Do not submit legacy schema-v1
-records that committed only to CID text.
+Schema version 3 records and the EIP-712 registration/supersession signatures bind the file digest,
+decoded CID codec, decoded CID multihash digest, and metadata commitment. The CCIP payload carries
+only the codec and multihash digest because the canonical 59-byte string is reconstructed
+deterministically at the receiver. Do not submit records from older schemas.
 
 ## Registration availability gate
 

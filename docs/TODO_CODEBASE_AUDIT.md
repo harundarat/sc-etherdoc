@@ -9,25 +9,8 @@ dicatat sebagai kebutuhan integrasi, bukan task repository ini.
 
 ## Task Aktif
 
-Kerjakan dari atas ke bawah. Jangan membuka kembali keputusan selesai kecuali perubahan baru
-melanggar invariant yang tercatat.
-
-### [ ] P3-01 Evaluasi encoding CID/payload yang lebih ringkas
-
-Task ini bersyarat pada hasil benchmark. `bytes32 documentId` sudah digunakan sebagai storage key
-dan indexed event. CID masih dikirim agar receiver dapat melakukan retrieval serta verifikasi secara
-mandiri.
-
-Implementasi:
-
-- Benchmark biaya payload string CID saat ini terhadap representasi CID compact yang dapat
-  direkonstruksi secara deterministik.
-- Ubah encoding hanya jika penghematannya material dan validasi receiver tetap sederhana.
-- Jika schema payload berubah, naikkan schema version, tambahkan known-answer/negative test, dan
-  gunakan deployment baru beserta remote rotation; tidak perlu compatibility dengan pesan lama.
-
-Selesai jika benchmark dan keputusan dicatat. Jika optimasi diterapkan, codec source/receiver,
-fuzz test, integration test, dan dokumentasi schema harus diperbarui bersama.
+Tidak ada. Jangan membuka kembali keputusan selesai kecuali perubahan baru melanggar invariant yang
+tercatat.
 
 ## Catatan Integrasi di Luar Repository
 
@@ -85,6 +68,9 @@ jika seluruh replica berasal dari issuer yang sama.
   FTF, custom CCV/executor, token transfer, serta compatibility deployment/pesan lama tidak
   didukung.
 - [x] Gas limit adalah remote policy bertipe `uint32` dan diuji bersama fee quote serta codec.
+- [x] Schema payload v3 memakai ABI fixed 448 byte dan CID compact yang direkonstruksi receiver;
+  benchmark terhadap schema v2, known-answer, negative, fuzz, dan integration test tercatat di
+  `docs/PAYLOAD_SCHEMA.md`.
 - [x] Kontrak non-upgradeable; perubahan logic menggunakan deployment baru dan remote rotation.
 
 ## Gate Perubahan Smart Contract
@@ -115,4 +101,5 @@ gas, atau ukuran bytecode ke dokumen ini karena cepat stale.
 - Governance dan emergency controls: `docs/GOVERNANCE_RUNBOOK.md`
 - CCIP failure/manual execution: `docs/CCIP_RECOVERY_RUNBOOK.md`
 - CID, hashing, dan verifier: `docs/IPFS_POLICY.md`
+- Schema dan benchmark payload: `docs/PAYLOAD_SCHEMA.md`
 - Test strategy dan command: `docs/TESTING.md`

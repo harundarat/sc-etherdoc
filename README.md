@@ -109,19 +109,21 @@ destination received or processed it; destination events and CCIP message status
 separately. The destination applies only a higher record version, so an out-of-order older message
 cannot reactivate a revoked or superseded document.
 
-CCIP data uses the versioned `DocumentPayload` envelope. Schema version 2 binds the operation
-(`REGISTER`, `REVOKE`, or `SUPERSEDE`), canonical document ID, document version, and full provenance
-record. Both endpoints reject a zero file digest, a non-canonical or unsupported CID, inconsistent
-decoded CID metadata, raw CID/file-digest mismatches, unsupported or internally inconsistent
-envelopes, and encoded payloads larger than 1,024 bytes. Schema-v1 payloads are intentionally
-incompatible and require a new deployment/remote rotation rather than being silently reinterpreted.
+CCIP data uses the fixed 448-byte `DocumentPayload` schema version 3. It sends the operation and
+provenance fields once, carries a CID as compact `(codec, multihashDigest)` metadata, and lets the
+receiver deterministically reconstruct the canonical CID plus document ID. Both endpoints reject a
+zero file digest, unsupported CID codecs, raw CID/file-digest mismatches, unsupported or internally
+inconsistent envelopes, and payloads whose encoded length is not exact. Older payload schemas are
+intentionally incompatible and require a new deployment/remote rotation rather than being silently
+reinterpreted. The field layout, benchmark, and reconstruction rules are documented in the
+[payload schema](docs/PAYLOAD_SCHEMA.md).
 
 The receiver authenticates the source pair before decoding payload data and records every
 successfully handled CCIP `messageId`. Re-delivery of the same message and a distinct message carrying
 an equal or older document version are ignored idempotently and emit `MessageIgnored`; invalid or
 conflicting payloads revert. `isMessageProcessed(messageId)` and `getMessageDocument(messageId)`
 provide replay and indexing evidence. ExtraArgs V3 has no v1 `allowOutOfOrderExecution` toggle.
-Etherdoc independently enforces monotonic state: schema 2 permits only version 1 `REGISTER` records
+Etherdoc independently enforces monotonic state: schema 3 permits only version 1 `REGISTER` records
 followed by one version 2 terminal operation, so an older active record cannot overwrite a received
 revocation or supersession.
 
