@@ -3,10 +3,12 @@ pragma solidity 0.8.24;
 
 import {IRouterClient} from "@chainlink/contracts-ccip/contracts/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
-import {IERC20} from "@openzeppelin/contracts@5.0.2/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts@5.0.2/token/ERC20/utils/SafeERC20.sol";
-import {EIP712} from "@openzeppelin/contracts@5.0.2/utils/cryptography/EIP712.sol";
-import {ECDSA} from "@openzeppelin/contracts@5.0.2/utils/cryptography/ECDSA.sol";
+import {ExtraArgsCodec} from "@chainlink/contracts-ccip/contracts/libraries/ExtraArgsCodec.sol";
+import {FinalityCodec} from "@chainlink/contracts-ccip/contracts/libraries/FinalityCodec.sol";
+import {IERC20} from "@openzeppelin/contracts@5.3.0/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts@5.3.0/token/ERC20/utils/SafeERC20.sol";
+import {EIP712} from "@openzeppelin/contracts@5.3.0/utils/cryptography/EIP712.sol";
+import {ECDSA} from "@openzeppelin/contracts@5.3.0/utils/cryptography/ECDSA.sol";
 import {EtherdocGovernance} from "./EtherdocGovernance.sol";
 import {EtherdocTypes} from "./EtherdocTypes.sol";
 
@@ -34,13 +36,13 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         address receiver;
         uint64 sentAt;
         uint64 documentVersion;
-        uint256 gasLimit;
+        uint32 gasLimit;
         DispatchStatus status;
     }
 
     struct RemoteConfig {
         address receiver;
-        uint256 gasLimit;
+        uint32 gasLimit;
         bool allowlisted;
     }
 
@@ -105,7 +107,7 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         uint64 updatedAt
     );
     event RemoteConfigUpdated(
-        uint64 indexed destinationChainSelector, address indexed receiver, uint256 gasLimit, bool allowlisted
+        uint64 indexed destinationChainSelector, address indexed receiver, uint32 gasLimit, bool allowlisted
     );
     event TokenWithdrawn(address indexed token, address indexed recipient, uint256 amount);
     event RegistrationPaused(address indexed account);
@@ -120,7 +122,7 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
         string documentCID,
         uint64 documentVersion,
         EtherdocTypes.DocumentStatus documentStatus,
-        uint256 gasLimit,
+        uint32 gasLimit,
         address feeToken,
         uint256 fees
     );
@@ -399,8 +401,8 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
             receiver: abi.encode(_remote.receiver),
             data: encodedPayload,
             tokenAmounts: new Client.EVMTokenAmount[](0),
-            extraArgs: Client._argsToBytes(
-                Client.GenericExtraArgsV2({gasLimit: _remote.gasLimit, allowOutOfOrderExecution: true})
+            extraArgs: ExtraArgsCodec._getBasicEncodedExtraArgsV3(
+                _remote.gasLimit, FinalityCodec.WAIT_FOR_FINALITY_FLAG
             ),
             feeToken: address(i_linkToken)
         });
@@ -411,7 +413,7 @@ contract EtherdocSender is EtherdocGovernance, EIP712 {
      * @dev Destination bytecode cannot be inspected from the source chain. The deployment script
      *      validates the remote receiver code at configuration time.
      */
-    function configureRemote(uint64 _destinationChainSelector, address _receiver, uint256 _gasLimit, bool _allowlisted)
+    function configureRemote(uint64 _destinationChainSelector, address _receiver, uint32 _gasLimit, bool _allowlisted)
         external
         onlyOwner
     {

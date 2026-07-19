@@ -21,7 +21,7 @@ abstract contract NetworkConfigScript is Script {
         string rpcAlias;
         address sender;
         address receiver;
-        uint256 gasLimit;
+        uint32 gasLimit;
         FeeMode feeMode;
         uint64 directoryVerifiedAt;
     }
@@ -40,11 +40,15 @@ abstract contract NetworkConfigScript is Script {
 
         uint256 chainSelector = vm.parseJsonUint(json, string.concat(root, ".chainSelector"));
         uint256 directoryVerifiedAt = vm.parseJsonUint(json, string.concat(root, ".directoryVerifiedAt"));
+        uint256 gasLimit = vm.parseJsonUint(json, string.concat(root, ".gasLimit"));
         if (chainSelector > type(uint64).max) {
             revert InvalidNetworkConfig(_networkName, "chainSelector");
         }
         if (directoryVerifiedAt > type(uint64).max) {
             revert InvalidNetworkConfig(_networkName, "directoryVerifiedAt");
+        }
+        if (gasLimit == 0 || gasLimit > type(uint32).max) {
+            revert InvalidNetworkConfig(_networkName, "gasLimit");
         }
 
         config = NetworkConfig({
@@ -59,7 +63,9 @@ abstract contract NetworkConfigScript is Script {
             rpcAlias: vm.parseJsonString(json, string.concat(root, ".rpcAlias")),
             sender: address(0),
             receiver: address(0),
-            gasLimit: vm.parseJsonUint(json, string.concat(root, ".gasLimit")),
+            // Values above uint32 are rejected before constructing the config.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            gasLimit: uint32(gasLimit),
             feeMode: _parseFeeMode(_networkName, vm.parseJsonString(json, string.concat(root, ".feeMode"))),
             // Values above uint64 are rejected before constructing the config.
             // forge-lint: disable-next-line(unsafe-typecast)
