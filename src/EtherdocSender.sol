@@ -8,7 +8,7 @@ import {FinalityCodec} from "@chainlink/contracts-ccip/contracts/libraries/Final
 import {IERC20} from "@openzeppelin/contracts@5.3.0/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts@5.3.0/token/ERC20/utils/SafeERC20.sol";
 import {EIP712} from "@openzeppelin/contracts@5.3.0/utils/cryptography/EIP712.sol";
-import {ECDSA} from "@openzeppelin/contracts@5.3.0/utils/cryptography/ECDSA.sol";
+import {SignatureChecker} from "@openzeppelin/contracts@5.3.0/utils/cryptography/SignatureChecker.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts@5.3.0/utils/ReentrancyGuard.sol";
 import {EtherdocGovernance} from "./EtherdocGovernance.sol";
 import {EtherdocTypes} from "./EtherdocTypes.sol";
@@ -68,7 +68,7 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
     error IssuerNotAuthorized(address issuer);
     error CallerNotDocumentIssuer(address caller, address issuer);
     error SignatureExpired(uint256 deadline);
-    error InvalidIssuerSignature(address expectedIssuer, address recoveredSigner);
+    error InvalidIssuerSignature(address issuer);
     error DocumentAlreadyRegistered(bytes32 documentId);
     error DocumentNotRegistered(bytes32 documentId);
     error DocumentNotActive(bytes32 documentId);
@@ -643,6 +643,32 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
         );
     }
 
+    function getSupersedeDocumentDigest(
+        address _issuer,
+        bytes32 _oldDocumentId,
+        uint64 _currentVersion,
+        bytes32 _newContentDigest,
+        string calldata _newDocumentCID,
+        bytes32 _metadataCommitment,
+        uint256 _nonce,
+        uint256 _deadline
+    ) external view returns (bytes32) {
+        (uint8 newCidCodec, bytes32 newCidDigest) = _validateContentIdentifier(_newContentDigest, _newDocumentCID);
+        SupersedeAuthorization memory authorization = SupersedeAuthorization({
+            issuer: _issuer,
+            oldDocumentId: _oldDocumentId,
+            currentVersion: _currentVersion,
+            newDocumentId: EtherdocTypes.documentId(_issuer, _newContentDigest),
+            newContentDigest: _newContentDigest,
+            newCidCodec: newCidCodec,
+            newCidDigest: newCidDigest,
+            metadataCommitment: _metadataCommitment,
+            nonce: _nonce,
+            deadline: _deadline
+        });
+        return _hashTypedDataV4(_supersedeStructHash(authorization));
+    }
+
     function _registerDocument(
         bytes32 _contentDigest,
         string calldata _documentCID,
@@ -769,9 +795,8 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
             revert SignatureExpired(_deadline);
         }
         // slither-disable-end timestamp
-        address recoveredSigner = ECDSA.recover(_hashTypedDataV4(_structHash), _signature);
-        if (recoveredSigner != _issuer) {
-            revert InvalidIssuerSignature(_issuer, recoveredSigner);
+        if (!SignatureChecker.isValidSignatureNow(_issuer, _hashTypedDataV4(_structHash), _signature)) {
+            revert InvalidIssuerSignature(_issuer);
         }
         s_issuerNonces[_issuer]++;
     }

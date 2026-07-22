@@ -6,6 +6,7 @@ import {EtherdocSender} from "../src/EtherdocSender.sol";
 import {EtherdocTypes} from "../src/EtherdocTypes.sol";
 import {MockLinkToken} from "./mocks/MockLinkToken.sol";
 import {MockRouter} from "./mocks/MockRouter.sol";
+import {MockERC1271Issuer} from "./mocks/MockERC1271Issuer.sol";
 import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
 
 contract EtherdocProvenanceTest is Test {
@@ -167,25 +168,13 @@ contract EtherdocProvenanceTest is Test {
 
         bytes32 replacementDigest = CIDTestHelper.digestFor("signed-replacement");
         string memory replacementCID = CIDTestHelper.rawCIDFor("signed-replacement");
-        bytes32 newDocumentId = s_sender.computeDocumentId(s_issuer, replacementDigest);
         bytes32 replacementMetadata = keccak256("replacement metadata");
         uint256 deadline = block.timestamp + 1 days;
-        bytes32 structHash = keccak256(
-            abi.encode(
-                s_sender.SUPERSEDE_DOCUMENT_TYPEHASH(),
-                s_issuer,
-                oldDocumentId,
-                uint64(1),
-                newDocumentId,
-                replacementDigest,
-                uint8(0x55),
-                replacementDigest,
-                replacementMetadata,
-                uint256(0),
-                deadline
-            )
+        bytes32 newDocumentId = s_sender.computeDocumentId(s_issuer, replacementDigest);
+        bytes32 supersedeDigest = s_sender.getSupersedeDocumentDigest(
+            s_issuer, oldDocumentId, 1, replacementDigest, replacementCID, replacementMetadata, 0, deadline
         );
-        bytes memory signature = _sign(ISSUER_PRIVATE_KEY, _toEtherdocTypedDataHash(structHash));
+        bytes memory signature = _sign(ISSUER_PRIVATE_KEY, supersedeDigest);
 
         vm.prank(address(0xBEEF));
         bytes32 returnedDocumentId = s_sender.supersedeDocumentBySig(
@@ -206,6 +195,67 @@ contract EtherdocProvenanceTest is Test {
         s_sender.supersedeDocumentBySig(
             oldDocumentId, replacementDigest, replacementCID, replacementMetadata, s_issuer, deadline, signature
         );
+    }
+
+    function test_erc1271IssuerCanRegisterAndRevokeThroughRelayer() external {
+        MockERC1271Issuer issuer = new MockERC1271Issuer();
+        s_sender.setIssuerAuthorization(address(issuer), true);
+        bytes memory signature = hex"c0ffee";
+        uint256 deadline = block.timestamp + 1 days;
+        bytes32 documentId = _registerERC1271(issuer, "erc1271-revoke", 0, deadline, signature);
+
+        bytes32 revokeDigest = s_sender.getRevokeDocumentDigest(address(issuer), documentId, 1, 1, deadline);
+        issuer.configure(revokeDigest, signature);
+        s_sender.revokeDocumentBySig(documentId, address(issuer), deadline, signature);
+
+        assertEq(s_sender.getDocument(documentId).version, 2);
+        assertEq(s_sender.issuerNonce(address(issuer)), 2);
+    }
+
+    function test_erc1271IssuerCanSupersedeThroughRelayer() external {
+        MockERC1271Issuer issuer = new MockERC1271Issuer();
+        s_sender.setIssuerAuthorization(address(issuer), true);
+        bytes memory signature = hex"c0ffee";
+        uint256 deadline = block.timestamp + 1 days;
+        bytes32 oldDocumentId = _registerERC1271(issuer, "erc1271-old", 0, deadline, signature);
+
+        bytes32 replacementDigest = CIDTestHelper.digestFor("erc1271-replacement");
+        string memory replacementCID = CIDTestHelper.rawCIDFor("erc1271-replacement");
+        bytes32 supersedeDigest = s_sender.getSupersedeDocumentDigest(
+            address(issuer), oldDocumentId, 1, replacementDigest, replacementCID, bytes32(0), 1, deadline
+        );
+        issuer.configure(supersedeDigest, signature);
+        bytes32 replacementId = s_sender.supersedeDocumentBySig(
+            oldDocumentId, replacementDigest, replacementCID, bytes32(0), address(issuer), deadline, signature
+        );
+
+        assertEq(s_sender.getDocument(oldDocumentId).supersededBy, replacementId);
+        assertEq(s_sender.getDocument(replacementId).supersedes, oldDocumentId);
+        assertEq(s_sender.issuerNonce(address(issuer)), 2);
+    }
+
+    function test_erc1271IssuerRejectsInvalidMagicValueAndRevertWithoutConsumingNonce() external {
+        MockERC1271Issuer issuer = new MockERC1271Issuer();
+        s_sender.setIssuerAuthorization(address(issuer), true);
+        bytes32 digest = CIDTestHelper.digestFor("erc1271-invalid");
+        string memory documentCID = CIDTestHelper.rawCIDFor("erc1271-invalid");
+        bytes memory signature = hex"0badc0de";
+        uint256 deadline = block.timestamp + 1 days;
+        bytes32 registrationDigest =
+            s_sender.getRegisterDocumentDigest(address(issuer), digest, documentCID, bytes32(0), 0, deadline);
+        issuer.configure(registrationDigest, signature);
+
+        issuer.setReturnInvalidMagicValue(true);
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.InvalidIssuerSignature.selector, address(issuer)));
+        s_sender.registerDocumentBySig(digest, documentCID, bytes32(0), address(issuer), deadline, signature);
+
+        issuer.setReturnInvalidMagicValue(false);
+        issuer.setShouldRevert(true);
+        vm.expectRevert(abi.encodeWithSelector(EtherdocSender.InvalidIssuerSignature.selector, address(issuer)));
+        s_sender.registerDocumentBySig(digest, documentCID, bytes32(0), address(issuer), deadline, signature);
+
+        assertEq(s_sender.issuerNonce(address(issuer)), 0);
+        assertFalse(s_sender.isDocumentRegistered(s_sender.computeDocumentId(address(issuer), digest)));
     }
 
     function test_verificationSeparatesIntegrityFromValidity() external {
@@ -237,17 +287,27 @@ contract EtherdocProvenanceTest is Test {
         return _sign(_privateKey, digest);
     }
 
+    function _registerERC1271(
+        MockERC1271Issuer _issuer,
+        string memory _content,
+        uint256 _nonce,
+        uint256 _deadline,
+        bytes memory _signature
+    ) private returns (bytes32 documentId) {
+        bytes32 contentDigest = CIDTestHelper.digestFor(_content);
+        string memory documentCID = CIDTestHelper.rawCIDFor(_content);
+        bytes32 registrationDigest = s_sender.getRegisterDocumentDigest(
+            address(_issuer), contentDigest, documentCID, bytes32(0), _nonce, _deadline
+        );
+        _issuer.configure(registrationDigest, _signature);
+        return
+            s_sender.registerDocumentBySig(
+                contentDigest, documentCID, bytes32(0), address(_issuer), _deadline, _signature
+            );
+    }
+
     function _sign(uint256 _privateKey, bytes32 _digest) private pure returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(_privateKey, _digest);
         return abi.encodePacked(r, s, v);
-    }
-
-    function _toEtherdocTypedDataHash(bytes32 _structHash) private view returns (bytes32) {
-        bytes32 domainTypeHash =
-            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-        bytes32 domainSeparator = keccak256(
-            abi.encode(domainTypeHash, keccak256("Etherdoc"), keccak256("2"), block.chainid, address(s_sender))
-        );
-        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, _structHash));
     }
 }
