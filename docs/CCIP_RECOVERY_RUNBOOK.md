@@ -138,8 +138,9 @@ Urutan resume adalah destination lebih dahulu, lalu source:
 4. Governance memanggil `unpauseDispatch()` dan, bila relevan, `unpauseRegistration()`.
 5. Lanjutkan dispatch baru.
 
-Perubahan remote khusus lane melalui `configureRemote(..., false)` atau
-`configureTrustedRemote(..., false)` tetap dapat dipakai sebagai tindakan governance tambahan.
+Perubahan remote khusus lane melalui `configureRemote(..., false)` tetap dapat dipakai sebagai
+tindakan governance tambahan. Receiver dihentikan dengan `pauseReceive()`; `setTrustedSender(...)`
+hanya digunakan untuk rotasi sender yang telah diverifikasi pada canonical source chain yang sama.
 Setiap unpause/config change harus menggunakan deployment artifact terverifikasi, multisig resmi,
 dan change record incident. Lihat juga [governance runbook](GOVERNANCE_RUNBOOK.md).
 

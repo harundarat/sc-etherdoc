@@ -45,8 +45,9 @@ flowchart LR
 ```
 
 `EtherdocSender` is the canonical registry and outbound CCIP endpoint. `EtherdocReceiver` is a
-destination replica that accepts messages only from explicitly trusted
-`(sourceChainSelector, sender)` pairs. Registration and dispatch are separate transactions, so one
+destination replica bound at deployment to one canonical source chain. Governance may rotate the
+trusted sender on that chain, but changing the source selector or chain ID requires a new receiver.
+Registration and dispatch are separate transactions, so one
 document version can be sent to several independent destinations without coupling their success.
 
 The repository contains only the smart contracts and their operational tooling. Frontend, backend,
@@ -176,8 +177,9 @@ issuer's ability to revoke its historical records. Governance cannot rewrite or 
 issuer's record.
 
 Relayed registration, revocation, and supersession use the EIP-712 domain `Etherdoc`, version `2`,
-the current chain ID, and the sender address. Each authorization includes an issuer-scoped monotonic
-nonce and deadline, and a successful operation consumes the nonce.
+the current chain ID, and the sender address. Issuers may be EOAs or ERC-1271 contract wallets. Each
+authorization includes an issuer-scoped monotonic nonce and deadline, and a successful operation
+consumes the nonce. Digest getters are available for all three signed operations.
 
 ## Contracts and public API
 
@@ -199,9 +201,9 @@ nonce and deadline, and a successful operation consumes the nonce.
 | Operator | `dispatchDocument(...)` | Send one record version to one configured destination |
 | Governance | `configureRemote(...)` | Set the destination receiver and `uint32` callback gas policy |
 
-Receiver governance uses `configureTrustedRemote(...)` to authorize an exact source selector/sender
-pair. Pausers can stop registration, dispatch, or receive independently; only governance can
-unpause.
+Receiver governance uses `setTrustedSender(...)` to rotate the sender within the immutable canonical
+source chain. Pausers can stop registration, dispatch, or receive independently; only governance
+can unpause.
 
 ### Common reads and integration events
 
@@ -209,8 +211,11 @@ unpause.
   state.
 - `quoteFee`, `getRemoteConfig`, `getDispatch`, and `getDispatchAtVersion` expose lane and dispatch
   state.
-- `getReceipt`, `isDocumentReceived`, `isMessageProcessed`, and `getMessageDocument` expose
-  destination evidence.
+- `getRegisterDocumentDigest`, `getRevokeDocumentDigest`, and `getSupersedeDocumentDigest` provide
+  canonical EIP-712 digests for relayers and issuer wallets.
+- `getReceipt`, `isDocumentReceived`, `isMessageProcessed`, `getMessageDocument`, and
+  `getProcessedMessage` expose destination evidence, including the original document version for
+  every processed message ID.
 - `DocumentRegistered` and `DocumentStatusChanged` describe canonical lifecycle changes.
 - `MessageSent`, `MessageReceived`, and `MessageIgnored` reconcile asynchronous delivery and replay.
 
@@ -317,16 +322,17 @@ set +a
 Never commit `.env`, RPC secrets, API keys, plaintext production keys, or signing credentials. Use
 an encrypted Foundry account or hardware wallet for broadcasts. Before deployment, set
 `GOVERNANCE`, `INITIAL_ISSUER`, `OPERATOR`, and `PAUSER` explicitly. The source constructor uses all
-four roles; the destination constructor uses governance and pauser.
+four roles; the destination constructor also receives the canonical source selector, chain ID, and
+deployed sender from `SOURCE_NETWORK`.
 
-Deploy the destination and source separately from a clean, committed worktree:
+Deploy the source first, then the destination from a clean, committed worktree:
 
 ```shell
-NETWORK=inkSepolia RPC_URL="$INK_SEPOLIA_RPC_URL" \
-  bash script/deploy-contract.sh receiver --account deployer
-
 NETWORK=mantleSepolia RPC_URL="$MANTLE_SEPOLIA_RPC_URL" \
   bash script/deploy-contract.sh sender --account deployer
+
+NETWORK=inkSepolia SOURCE_NETWORK=mantleSepolia RPC_URL="$INK_SEPOLIA_RPC_URL" \
+  bash script/deploy-contract.sh receiver --account deployer
 ```
 
 Then configure both sides of the lane:

@@ -34,6 +34,10 @@ The receiver derives rather than transports:
 - `document.schemaVersion = payload.schemaVersion`;
 - the canonical CID string from `cidCodec` and `cidDigest`.
 
+Before accepting the reconstructed record, the receiver also requires `payload.sourceChainId` to
+equal the canonical source chain ID fixed in its constructor. The authenticated CCIP selector and
+trusted sender must match that same configured origin.
+
 The CID binary form is `[0x01, cidCodec, 0x12, 0x20, cidDigest]`. The receiver encodes those 36
 bytes as lowercase unpadded base32 and prepends the `b` multibase prefix. Only the Etherdoc profile's
 `raw` (`0x55`) and `dag-pb` (`0x70`) codecs are accepted. This follows the

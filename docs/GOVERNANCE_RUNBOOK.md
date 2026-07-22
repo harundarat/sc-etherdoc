@@ -8,7 +8,7 @@ accounts never inherit owner permissions.
 
 | Principal | Sender permissions | Receiver permissions |
 | --- | --- | --- |
-| Governance multisig | issuer/role administration, remote config, treasury withdrawal, unpause, two-step ownership transfer | pauser administration, trusted-remote config, unpause, two-step ownership transfer |
+| Governance multisig | issuer/role administration, remote config, treasury withdrawal, unpause, two-step ownership transfer | pauser administration, trusted-sender rotation, unpause, two-step ownership transfer |
 | Issuer | register, revoke, or supersede its own records, directly or by EIP-712 signature | none |
 | Operator | quote and dispatch configured records | none |
 | Pauser | pause registration and/or dispatch | pause receive |
@@ -30,9 +30,10 @@ PAUSER=0x...           # source or destination emergency key/multisig
 ```
 
 The sender constructor receives Router, LINK, governance, initial issuer, initial operator, and
-initial pauser. The receiver constructor receives Router, governance, and initial pauser. These
-addresses are constructor parameters so the broadcast EOA does not temporarily acquire production
-authority.
+initial pauser. The receiver constructor receives Router, governance, initial pauser, immutable
+canonical source selector and chain ID, plus the initial trusted sender. These parameters prevent
+the broadcast EOA from temporarily acquiring production authority or changing the meaning of
+existing destination receipts.
 
 Before funding or configuring a deployment:
 
@@ -40,7 +41,7 @@ Before funding or configuring a deployment:
 2. Verify `owner()` equals the intended multisig on both chains.
 3. Verify initial assignments with `isIssuerAuthorized` and `hasRole`.
 4. Verify `registrationPaused`, `dispatchPaused`, and `receivePaused` are false.
-5. Execute `configureRemote`, `configureTrustedRemote`, and subsequent role changes through the
+5. Execute `configureRemote`, `setTrustedSender`, and subsequent role changes through the
    governance multisig. Simulate and review exact calldata before collecting signatures.
 
 The checked-in configure scripts are convenient when the broadcast signer itself is governance,
@@ -92,6 +93,7 @@ IDs are inventoried, monitoring is active, and the change is linked to an incide
 receive before dispatch, then manually execute legitimate failed messages using the same message IDs.
 The detailed CCIP sequence is in [CCIP_RECOVERY_RUNBOOK.md](CCIP_RECOVERY_RUNBOOK.md).
 
-Etherdoc is intentionally non-upgradeable. If logic changes are required, deploy reviewed contracts
-and rotate trusted remotes explicitly. Add a proxy only after upgrade authorization, delay,
-monitoring, storage layout, and rollback policy are independently specified.
+Etherdoc is intentionally non-upgradeable. A sender may be rotated only within the receiver's
+immutable canonical chain. Moving the canonical source chain or changing receiver logic requires a
+new receiver deployment. Add a proxy only after upgrade authorization, delay, monitoring, storage
+layout, and rollback policy are independently specified.

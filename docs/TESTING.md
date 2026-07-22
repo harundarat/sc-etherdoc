@@ -5,7 +5,8 @@ Etherdoc separates deterministic PR checks from tests that depend on live networ
 - unit and negative tests cover authorization, configuration, lifecycle, events, Router/token
   failures, replay, malformed envelopes, and payload validation;
 - fuzz tests exercise canonical CID/digest combinations, independent issuers, fee/config bounds,
-  EIP-712 signatures, compact CID round trips, exact payload length, and multiple destination lanes;
+  EIP-712 EOA/ERC-1271 signatures, canonical source binding, compact CID round trips, exact payload
+  length, and multiple destination lanes;
 - payload codec tests pin the schema-v3 ABI hash, compare its 448-byte encoding with the 768-byte
   schema-v2 shape, and verify deterministic CID reconstruction;
 - handler-based invariant tests randomize active/revoked delivery and replay ordering while tracking

@@ -43,15 +43,16 @@ the transaction receipt and on-chain code, then creates a manifest.
 Use an encrypted Foundry account or hardware wallet; do not put a production private key in `.env`.
 
 ```shell
-# Destination receiver
-NETWORK=inkSepolia \
-RPC_URL="$INK_SEPOLIA_RPC_URL" \
-  bash script/deploy-contract.sh receiver --account deployer
-
 # Source sender
 NETWORK=mantleSepolia \
 RPC_URL="$MANTLE_SEPOLIA_RPC_URL" \
   bash script/deploy-contract.sh sender --account deployer
+
+# Destination receiver, bound to the deployed canonical source
+NETWORK=inkSepolia \
+SOURCE_NETWORK=mantleSepolia \
+RPC_URL="$INK_SEPOLIA_RPC_URL" \
+  bash script/deploy-contract.sh receiver --account deployer
 ```
 
 The wrapper supplies `--broadcast` itself. A rerun reads
@@ -74,11 +75,12 @@ by Git.
 
 ## Configure both sides of a lane
 
-The single remote configuration script uses `CONFIGURE_TARGET` to select the contract on the
-connected chain:
+The receiver constructor establishes the canonical selector, source chain ID, and initial sender.
+The configuration script reconciles later sender rotations and configures destination routing on
+the source:
 
 ```shell
-# Destination trusts source sender
+# Destination reconciles a rotated source sender (normally a no-op after initial deployment)
 SOURCE_NETWORK=mantleSepolia \
 DESTINATION_NETWORK=inkSepolia \
 CONFIGURE_TARGET=RECEIVER \
@@ -105,8 +107,9 @@ CONFIGURE_TARGET=SENDER \
 ```
 
 After Safe execution, rerun the command. It must report that the remote is already configured. The
-sender comparison includes selector, receiver, `uint32` gas limit, and allowlist status; the receiver
-comparison checks the exact selector/sender pair.
+sender comparison includes selector, receiver, `uint32` gas limit, and allowlist status. Receiver
+configuration first verifies its immutable selector and source chain ID, then compares the current
+trusted sender.
 
 ## Fund or withdraw LINK
 

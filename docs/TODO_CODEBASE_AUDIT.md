@@ -54,8 +54,9 @@ jika seluruh replica berasal dari issuer yang sama.
 - [x] Source `DISPATCHED` hanya membuktikan Router menerima pesan. Destination `RECEIVED` dibuktikan
   oleh receipt/event receiver.
 - [x] Record mengikat content digest, CID canonical, issuer, provenance, schema/version, lifecycle,
-  dan supersession. EIP-712 nonce/deadline mendukung relayer.
-- [x] Trusted remote adalah pasangan atomic `(sourceChainSelector, sender)`.
+  dan supersession. EIP-712 nonce/deadline mendukung relayer EOA maupun ERC-1271.
+- [x] Receiver terikat ke satu source selector dan chain ID immutable; governance hanya dapat
+  merotasi trusted sender pada chain canonical tersebut.
 - [x] Dispatch memakai `RemoteConfig` governance-controlled; receiver arbitrary dari caller ditolak.
 - [x] Payload tervalidasi terhadap schema, operation, document ID, version, dan provenance. Replay
   serta versi stale ditangani idempotent tanpa mengaktifkan kembali state terminal.
