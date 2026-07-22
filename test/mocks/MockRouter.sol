@@ -22,6 +22,7 @@ contract MockRouter is IRouterClient {
     address private s_reentryTarget;
     bytes private s_reentryCalldata;
     bool private s_lastReentrySucceeded;
+    bool private s_returnZeroMessageId;
     bytes private s_lastReentryReturnData;
 
     function setLaneFailure(uint64 _destinationChainSelector, bool _shouldFail) external {
@@ -34,6 +35,10 @@ contract MockRouter is IRouterClient {
 
     function setFee(uint256 _fee) external {
         s_fee = _fee;
+    }
+
+    function setReturnZeroMessageId(bool _returnZeroMessageId) external {
+        s_returnZeroMessageId = _returnZeroMessageId;
     }
 
     function configureReentry(address _target, bytes calldata _calldata) external {
@@ -81,6 +86,9 @@ contract MockRouter is IRouterClient {
         }
 
         s_nonce++;
+        if (s_returnZeroMessageId) {
+            return bytes32(0);
+        }
         return keccak256(abi.encode(_destinationChainSelector, _message.receiver, _message.data, s_nonce));
     }
 

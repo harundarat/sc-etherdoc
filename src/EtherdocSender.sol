@@ -80,6 +80,7 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
     error FeeExceedsMaximum(uint256 calculatedFees, uint256 maximumFee);
     error InvalidRouter(address router);
     error InvalidLinkToken(address linkToken);
+    error InvalidOutboundMessageId();
     error InvalidTokenAddress();
     error InvalidWithdrawalRecipient();
     error RegistrationIsPaused();
@@ -388,6 +389,9 @@ contract EtherdocSender is EtherdocGovernance, EIP712, ReentrancyGuard {
 
         i_linkToken.forceApprove(address(i_router), fees);
         messageId = i_router.ccipSend(_destinationChainSelector, evm2AnyMessage);
+        if (messageId == bytes32(0)) {
+            revert InvalidOutboundMessageId();
+        }
     }
 
     function _buildMessage(

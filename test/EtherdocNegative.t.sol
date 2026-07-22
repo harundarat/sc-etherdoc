@@ -250,6 +250,23 @@ contract EtherdocNegativeTest is Test {
         );
     }
 
+    function test_dispatchRejectsZeroRouterMessageIdWithoutRecordingOrApproval() external {
+        bytes32 documentId = _register("zero-message-id");
+        uint256 balanceBefore = s_link.balanceOf(address(s_sender));
+        uint256 fee = s_router.FEE();
+        s_router.setReturnZeroMessageId(true);
+
+        vm.expectRevert(EtherdocSender.InvalidOutboundMessageId.selector);
+        s_sender.dispatchDocument(documentId, DESTINATION, fee);
+
+        assertEq(s_link.balanceOf(address(s_sender)), balanceBefore);
+        assertEq(s_link.allowance(address(s_sender), address(s_router)), 0);
+        assertEq(
+            uint8(s_sender.getDispatch(documentId, DESTINATION).status),
+            uint8(EtherdocSender.DispatchStatus.NOT_DISPATCHED)
+        );
+    }
+
     function test_documentLifecycleEventsExposeIndexedDocumentIdAndCompleteFields() external {
         bytes32 digest = CIDTestHelper.digestFor("event-document");
         string memory documentCID = CIDTestHelper.rawCIDFor("event-document");
