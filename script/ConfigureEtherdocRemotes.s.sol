@@ -77,17 +77,17 @@ contract ConfigureEtherdocRemotesScript is NetworkConfigScript {
         _requireLocalCode(_destination, "EtherdocReceiver", _destination.receiver);
 
         EtherdocReceiver receiver = EtherdocReceiver(_destination.receiver);
+        _requireReceiverOrigin(receiver, _source, _destination);
         if (_receiverRemoteMatches(receiver, _source)) {
             console.log("EtherdocReceiver remote already trusted; no transaction created");
             return;
         }
 
-        bytes memory callData =
-            abi.encodeCall(EtherdocReceiver.configureTrustedRemote, (_source.chainSelector, _source.sender, true));
+        bytes memory callData = abi.encodeCall(EtherdocReceiver.setTrustedSender, (_source.sender));
         if (_destination.governanceMode == GovernanceMode.DIRECT) {
             _requireDirectGovernance(_destination);
             vm.startBroadcast();
-            receiver.configureTrustedRemote(_source.chainSelector, _source.sender, true);
+            receiver.setTrustedSender(_source.sender);
             vm.stopBroadcast();
         } else {
             (string memory path, bool written) = _persistMultisigProposal(
@@ -123,5 +123,24 @@ contract ConfigureEtherdocRemotesScript is NetworkConfigScript {
         returns (bool)
     {
         return _receiver.isTrustedRemote(_source.chainSelector, _source.sender);
+    }
+
+    function _requireReceiverOrigin(
+        EtherdocReceiver _receiver,
+        NetworkConfig memory _source,
+        NetworkConfig memory _destination
+    ) internal view {
+        uint64 actualSelector = _receiver.getSourceChainSelector();
+        if (actualSelector != _source.chainSelector) {
+            revert DeploymentValueMismatch(
+                _destination.name, "EtherdocReceiver", "sourceChainSelector", _source.chainSelector, actualSelector
+            );
+        }
+        uint256 actualChainId = _receiver.getSourceChainId();
+        if (actualChainId != _source.chainId) {
+            revert DeploymentValueMismatch(
+                _destination.name, "EtherdocReceiver", "sourceChainId", _source.chainId, actualChainId
+            );
+        }
     }
 }

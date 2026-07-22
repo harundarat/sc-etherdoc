@@ -98,10 +98,16 @@ contract Integration is Test {
         etherdocSender = new EtherdocSender(
             address(router), address(link), address(this), address(this), address(this), address(this)
         );
-        etherdocReceiver = new EtherdocReceiver(address(router), address(this), address(this));
+        etherdocReceiver = new EtherdocReceiver(
+            address(router),
+            address(this),
+            address(this),
+            router.SOURCE_CHAIN_SELECTOR(),
+            block.chainid,
+            address(etherdocSender)
+        );
 
         etherdocSender.configureRemote(router.DESTINATION_CHAIN_SELECTOR(), address(etherdocReceiver), 500_000, true);
-        etherdocReceiver.configureTrustedRemote(router.SOURCE_CHAIN_SELECTOR(), address(etherdocSender), true);
         assertTrue(link.transfer(address(etherdocSender), 10 ether));
     }
 

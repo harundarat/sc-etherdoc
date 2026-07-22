@@ -49,6 +49,8 @@ forge script script/EtherdocSenderScript.s.sol:EtherdocSenderScript \
   --sender "$deployer"
 
 NETWORK=local \
+SOURCE_NETWORK=local \
+TRUSTED_SENDER="$issuer" \
 NETWORK_CONFIG_PATH=config/ci/anvil.json \
 GOVERNANCE="$governance" \
 PAUSER="$pauser" \

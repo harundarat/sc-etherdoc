@@ -47,13 +47,22 @@ contract EtherdocNegativeTest is Test {
         new EtherdocSender(address(s_router), address(s_link), address(this), address(this), address(this), address(0));
 
         vm.expectRevert(abi.encodeWithSelector(CCIPReceiver.InvalidRouter.selector, address(0)));
-        new EtherdocReceiver(address(0), address(this), address(this));
+        new EtherdocReceiver(address(0), address(this), address(this), 99, block.chainid, address(s_sender));
 
         vm.expectRevert(EtherdocGovernance.InvalidGovernanceAddress.selector);
-        new EtherdocReceiver(address(s_router), address(0), address(this));
+        new EtherdocReceiver(address(s_router), address(0), address(this), 99, block.chainid, address(s_sender));
 
         vm.expectRevert(EtherdocGovernance.InvalidRoleAccount.selector);
-        new EtherdocReceiver(address(s_router), address(this), address(0));
+        new EtherdocReceiver(address(s_router), address(this), address(0), 99, block.chainid, address(s_sender));
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidSourceChainSelector.selector, uint64(0)));
+        new EtherdocReceiver(address(s_router), address(this), address(this), 0, block.chainid, address(s_sender));
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidSourceChainId.selector, uint256(0)));
+        new EtherdocReceiver(address(s_router), address(this), address(this), 99, 0, address(s_sender));
+
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidRemoteSender.selector, address(0)));
+        new EtherdocReceiver(address(s_router), address(this), address(this), 99, block.chainid, address(0));
     }
 
     function test_senderConstructorRejectsInvalidRouterAndLinkDependencies() external {
@@ -81,14 +90,15 @@ contract EtherdocNegativeTest is Test {
         address routerWithoutCode = makeAddr("receiver-router-without-code");
 
         vm.expectRevert(abi.encodeWithSelector(CCIPReceiver.InvalidRouter.selector, routerWithoutCode));
-        new EtherdocReceiver(routerWithoutCode, address(this), address(this));
+        new EtherdocReceiver(routerWithoutCode, address(this), address(this), 99, block.chainid, address(s_sender));
     }
 
     function test_constructorsAcceptDeployedDependencies() external {
         EtherdocSender sender = new EtherdocSender(
             address(s_router), address(s_link), address(this), address(this), address(this), address(this)
         );
-        EtherdocReceiver receiver = new EtherdocReceiver(address(s_router), address(this), address(this));
+        EtherdocReceiver receiver =
+            new EtherdocReceiver(address(s_router), address(this), address(this), 99, block.chainid, address(s_sender));
 
         assertEq(sender.getRouter(), address(s_router));
         assertEq(sender.getFeeToken(), address(s_link));
@@ -119,14 +129,19 @@ contract EtherdocNegativeTest is Test {
 
     function test_onlyGovernanceCanUseEveryReceiverAdminFunction() external {
         DeferredRouter router = new DeferredRouter();
-        EtherdocReceiver receiver = new EtherdocReceiver(address(router), address(this), address(this));
+        EtherdocReceiver receiver = new EtherdocReceiver(
+            address(router),
+            address(this),
+            address(this),
+            router.SOURCE_CHAIN_SELECTOR(),
+            block.chainid,
+            address(s_sender)
+        );
         address attacker = makeAddr("attacker");
         bytes memory onlyOwner = bytes("Only callable by owner");
-        uint64 sourceChainSelector = router.SOURCE_CHAIN_SELECTOR();
-
         vm.startPrank(attacker);
         vm.expectRevert(onlyOwner);
-        receiver.configureTrustedRemote(sourceChainSelector, address(s_sender), true);
+        receiver.setTrustedSender(attacker);
         vm.expectRevert(onlyOwner);
         receiver.setPauser(attacker, true);
         vm.expectRevert(onlyOwner);
@@ -184,7 +199,14 @@ contract EtherdocNegativeTest is Test {
         s_sender.unpauseDispatch();
 
         DeferredRouter router = new DeferredRouter();
-        EtherdocReceiver receiver = new EtherdocReceiver(address(router), address(this), address(this));
+        EtherdocReceiver receiver = new EtherdocReceiver(
+            address(router),
+            address(this),
+            address(this),
+            router.SOURCE_CHAIN_SELECTOR(),
+            block.chainid,
+            address(s_sender)
+        );
         receiver.pauseReceive();
         vm.expectRevert(EtherdocReceiver.ReceiveIsPaused.selector);
         receiver.pauseReceive();
@@ -327,9 +349,10 @@ contract EtherdocReceiverNegativeTest is Test {
     function setUp() public {
         vm.warp(1_000_000);
         s_router = new DeferredRouter();
-        s_receiver = new EtherdocReceiver(address(s_router), address(this), address(this));
         s_remoteSender = makeAddr("remote-sender");
-        s_receiver.configureTrustedRemote(SOURCE_SELECTOR, s_remoteSender, true);
+        s_receiver = new EtherdocReceiver(
+            address(s_router), address(this), address(this), SOURCE_SELECTOR, 5_003, s_remoteSender
+        );
         s_document = _validDocument("receiver-negative");
     }
 
@@ -459,7 +482,7 @@ contract EtherdocReceiverNegativeTest is Test {
     function test_rejectsInvalidDocumentVersionAndTimestamps() external {
         EtherdocTypes.DocumentRecord memory document = s_document;
         document.sourceChainId = 0;
-        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidDocumentVersion.selector, document.documentId));
+        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.UnexpectedSourceChainId.selector, 5_003, 0));
         _deliver(keccak256("zero-source-chain"), document, EtherdocTypes.Operation.REGISTER);
 
         document = s_document;

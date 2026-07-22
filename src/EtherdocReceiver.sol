@@ -26,9 +26,17 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
         EtherdocTypes.DocumentRecord document;
     }
 
+    struct ProcessedMessage {
+        bytes32 documentId;
+        uint64 documentVersion;
+        bool processed;
+    }
+
     error InvalidMessageId();
     error InvalidSenderEncoding(uint256 encodedLength);
     error InvalidSourceChainSelector(uint64 sourceChainSelector);
+    error InvalidSourceChainId(uint256 sourceChainId);
+    error UnexpectedSourceChainId(uint256 expectedSourceChainId, uint256 actualSourceChainId);
     error InvalidRemoteSender(address sender);
     error UntrustedRemote(uint64 sourceChainSelector, address sender);
     error InvalidPayloadLength(uint256 actualLength, uint256 expectedLength);
@@ -62,36 +70,51 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
         uint64 storedVersion,
         bool duplicateMessage
     );
-    event TrustedRemoteConfigured(uint64 indexed sourceChainSelector, address indexed sender, bool trusted);
+    event TrustedSenderUpdated(address indexed previousSender, address indexed newSender);
     event ReceivePaused(address indexed account);
     event ReceiveUnpaused(address indexed account);
 
     mapping(bytes32 documentId => ReceiptRecord receipt) private s_receipts;
-    mapping(bytes32 messageId => bool processed) private s_processedMessages;
-    mapping(bytes32 messageId => bytes32 documentId) private s_messageDocuments;
-    mapping(uint64 sourceChainSelector => mapping(address sender => bool trusted)) private s_trustedRemotes;
+    mapping(bytes32 messageId => ProcessedMessage messageRecord) private s_processedMessages;
+    uint64 private immutable i_sourceChainSelector;
+    uint256 private immutable i_sourceChainId;
+    address private s_trustedSender;
     bool private s_receivePaused;
 
-    constructor(address _router, address _governance, address _initialPauser)
-        CCIPReceiver(_router)
-        EtherdocGovernance(_governance)
-    {
+    constructor(
+        address _router,
+        address _governance,
+        address _initialPauser,
+        uint64 _sourceChainSelector,
+        uint256 _sourceChainId,
+        address _initialTrustedSender
+    ) CCIPReceiver(_router) EtherdocGovernance(_governance) {
         if (_router.code.length == 0) {
             revert InvalidRouter(_router);
         }
-        _setRole(PAUSER_ROLE, _initialPauser, true);
-    }
-
-    function configureTrustedRemote(uint64 _sourceChainSelector, address _sender, bool _trusted) external onlyOwner {
         if (_sourceChainSelector == 0) {
             revert InvalidSourceChainSelector(_sourceChainSelector);
         }
+        if (_sourceChainId == 0) {
+            revert InvalidSourceChainId(_sourceChainId);
+        }
+        if (_initialTrustedSender == address(0)) {
+            revert InvalidRemoteSender(_initialTrustedSender);
+        }
+        i_sourceChainSelector = _sourceChainSelector;
+        i_sourceChainId = _sourceChainId;
+        s_trustedSender = _initialTrustedSender;
+        _setRole(PAUSER_ROLE, _initialPauser, true);
+        emit TrustedSenderUpdated(address(0), _initialTrustedSender);
+    }
+
+    function setTrustedSender(address _sender) external onlyOwner {
         if (_sender == address(0)) {
             revert InvalidRemoteSender(_sender);
         }
-
-        s_trustedRemotes[_sourceChainSelector][_sender] = _trusted;
-        emit TrustedRemoteConfigured(_sourceChainSelector, _sender, _trusted);
+        address previousSender = s_trustedSender;
+        s_trustedSender = _sender;
+        emit TrustedSenderUpdated(previousSender, _sender);
     }
 
     function setPauser(address _pauser, bool _authorized) external onlyOwner {
@@ -142,13 +165,16 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
             revert InvalidSenderEncoding(message.sender.length);
         }
         address sender = abi.decode(message.sender, (address));
-        if (!s_trustedRemotes[message.sourceChainSelector][sender]) {
+        if (message.sourceChainSelector != i_sourceChainSelector || sender != s_trustedSender) {
             revert UntrustedRemote(message.sourceChainSelector, sender);
         }
-        if (s_processedMessages[message.messageId]) {
-            bytes32 processedDocumentId = s_messageDocuments[message.messageId];
+        ProcessedMessage memory processedMessage = s_processedMessages[message.messageId];
+        if (processedMessage.processed) {
+            bytes32 processedDocumentId = processedMessage.documentId;
             uint64 storedVersion = s_receipts[processedDocumentId].document.version;
-            emit MessageIgnored(message.messageId, processedDocumentId, storedVersion, storedVersion, true);
+            emit MessageIgnored(
+                message.messageId, processedDocumentId, processedMessage.documentVersion, storedVersion, true
+            );
             return;
         }
         if (message.data.length != EtherdocTypes.PAYLOAD_LENGTH) {
@@ -156,6 +182,9 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
         }
 
         EtherdocTypes.DocumentPayload memory payload = abi.decode(message.data, (EtherdocTypes.DocumentPayload));
+        if (payload.sourceChainId != i_sourceChainId) {
+            revert UnexpectedSourceChainId(i_sourceChainId, payload.sourceChainId);
+        }
         EtherdocTypes.DocumentRecord memory document = _validatePayload(payload);
 
         ReceiptRecord storage existingReceipt = s_receipts[document.documentId];
@@ -165,7 +194,7 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
                 _validateSameState(existingReceipt.document, document);
             }
             if (document.version <= existingReceipt.document.version) {
-                _markProcessed(message.messageId, document.documentId);
+                _markProcessed(message.messageId, document.documentId, document.version);
                 emit MessageIgnored(
                     message.messageId, document.documentId, document.version, existingReceipt.document.version, false
                 );
@@ -183,7 +212,7 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
             operation: payload.operation,
             document: document
         });
-        _markProcessed(message.messageId, document.documentId);
+        _markProcessed(message.messageId, document.documentId, document.version);
 
         emit MessageReceived(
             message.messageId,
@@ -207,11 +236,11 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
     }
 
     function isTrustedRemote(uint64 _sourceChainSelector, address _sender) external view returns (bool) {
-        return s_trustedRemotes[_sourceChainSelector][_sender];
+        return _sourceChainSelector == i_sourceChainSelector && _sender == s_trustedSender;
     }
 
     function isMessageProcessed(bytes32 _messageId) external view returns (bool) {
-        return s_processedMessages[_messageId];
+        return s_processedMessages[_messageId].processed;
     }
 
     function receivePaused() external view returns (bool) {
@@ -219,7 +248,23 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
     }
 
     function getMessageDocument(bytes32 _messageId) external view returns (bytes32) {
-        return s_messageDocuments[_messageId];
+        return s_processedMessages[_messageId].documentId;
+    }
+
+    function getProcessedMessage(bytes32 _messageId) external view returns (ProcessedMessage memory) {
+        return s_processedMessages[_messageId];
+    }
+
+    function getSourceChainSelector() external view returns (uint64) {
+        return i_sourceChainSelector;
+    }
+
+    function getSourceChainId() external view returns (uint256) {
+        return i_sourceChainId;
+    }
+
+    function getTrustedSender() external view returns (address) {
+        return s_trustedSender;
     }
 
     function isDocumentReceived(bytes32 _documentId) external view returns (bool) {
@@ -338,8 +383,8 @@ contract EtherdocReceiver is CCIPReceiver, EtherdocGovernance {
         }
     }
 
-    function _markProcessed(bytes32 _messageId, bytes32 _documentId) private {
-        s_processedMessages[_messageId] = true;
-        s_messageDocuments[_messageId] = _documentId;
+    function _markProcessed(bytes32 _messageId, bytes32 _documentId, uint64 _documentVersion) private {
+        s_processedMessages[_messageId] =
+            ProcessedMessage({documentId: _documentId, documentVersion: _documentVersion, processed: true});
     }
 }

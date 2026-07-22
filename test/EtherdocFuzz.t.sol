@@ -34,8 +34,9 @@ contract EtherdocFuzzTest is Test {
         s_sender.configureRemote(DESTINATION, RECEIVER, 500_000, true);
 
         s_deferredRouter = new DeferredRouter();
-        s_receiver = new EtherdocReceiver(address(s_deferredRouter), address(this), address(this));
-        s_receiver.configureTrustedRemote(SOURCE_SELECTOR, REMOTE_SENDER, true);
+        s_receiver = new EtherdocReceiver(
+            address(s_deferredRouter), address(this), address(this), SOURCE_SELECTOR, block.chainid, REMOTE_SENDER
+        );
     }
 
     function testFuzz_registersAnyNonzeroRawDigest(bytes32 _contentDigest, bytes32 _metadataCommitment) external {
@@ -252,7 +253,7 @@ contract EtherdocFuzzTest is Test {
             cidCodec: 0x55,
             cidDigest: _contentDigest,
             issuer: _issuer,
-            sourceChainId: 5_003,
+            sourceChainId: block.chainid,
             registeredAt: uint64(block.timestamp),
             updatedAt: uint64(block.timestamp),
             version: 1,

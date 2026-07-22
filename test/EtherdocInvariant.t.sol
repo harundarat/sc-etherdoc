@@ -93,10 +93,16 @@ contract EtherdocInvariantTest is StdInvariant, Test {
         s_sender = new EtherdocSender(
             address(s_router), address(link), address(this), address(this), address(this), address(this)
         );
-        s_receiver = new EtherdocReceiver(address(s_router), address(this), address(this));
+        s_receiver = new EtherdocReceiver(
+            address(s_router),
+            address(this),
+            address(this),
+            s_router.SOURCE_CHAIN_SELECTOR(),
+            block.chainid,
+            address(s_sender)
+        );
         assertTrue(link.transfer(address(s_sender), 100 ether));
         s_sender.configureRemote(DESTINATION, address(s_receiver), 500_000, true);
-        s_receiver.configureTrustedRemote(s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender), true);
 
         s_documentId = s_sender.registerDocument(
             CIDTestHelper.digestFor("invariant-document"), CIDTestHelper.rawCIDFor("invariant-document")

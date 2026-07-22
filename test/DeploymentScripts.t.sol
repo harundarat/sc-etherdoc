@@ -25,11 +25,13 @@ contract SenderDeploymentHarness is EtherdocSenderScript {
 }
 
 contract ReceiverDeploymentHarness is EtherdocReceiverScript {
-    function deployOrReuse(NetworkConfig memory _network, address _governance, address _pauser)
-        external
-        returns (EtherdocReceiver receiver, bool deployed)
-    {
-        return _deployOrReuse(_network, _governance, _pauser);
+    function deployOrReuse(
+        NetworkConfig memory _network,
+        NetworkConfig memory _source,
+        address _governance,
+        address _pauser
+    ) external returns (EtherdocReceiver receiver, bool deployed) {
+        return _deployOrReuse(_network, _source, _governance, _pauser);
     }
 }
 
@@ -44,6 +46,14 @@ contract RemoteConfigurationHarness is ConfigureEtherdocRemotesScript {
         returns (bool)
     {
         return _receiverRemoteMatches(_receiver, _source);
+    }
+
+    function requireReceiverOrigin(
+        EtherdocReceiver _receiver,
+        NetworkConfig memory _source,
+        NetworkConfig memory _destination
+    ) external view {
+        _requireReceiverOrigin(_receiver, _source, _destination);
     }
 }
 
@@ -92,15 +102,20 @@ contract DeploymentScriptsTest is Test {
 
     function test_receiverDeploymentReusesMatchingAddress() external {
         NetworkConfigScript.NetworkConfig memory network = _network();
+        NetworkConfigScript.NetworkConfig memory source = _network();
+        source.sender = makeAddr("source-sender");
 
         (EtherdocReceiver receiver, bool deployed) =
-            s_receiverHarness.deployOrReuse(network, address(this), address(this));
+            s_receiverHarness.deployOrReuse(network, source, address(this), address(this));
         assertTrue(deployed);
         assertEq(receiver.getRouter(), address(s_router));
+        assertEq(receiver.getSourceChainSelector(), source.chainSelector);
+        assertEq(receiver.getSourceChainId(), source.chainId);
+        assertEq(receiver.getTrustedSender(), source.sender);
 
         network.receiver = address(receiver);
         (EtherdocReceiver reusedReceiver, bool redeployed) =
-            s_receiverHarness.deployOrReuse(network, address(this), address(this));
+            s_receiverHarness.deployOrReuse(network, source, address(this), address(this));
         assertFalse(redeployed);
         assertEq(address(reusedReceiver), address(receiver));
     }
@@ -127,6 +142,8 @@ contract DeploymentScriptsTest is Test {
 
     function test_receiverDeploymentRejectsAddressWithoutCode() external {
         NetworkConfigScript.NetworkConfig memory network = _network();
+        NetworkConfigScript.NetworkConfig memory source = _network();
+        source.sender = makeAddr("source-sender");
         network.receiver = makeAddr("missing-receiver");
 
         vm.expectRevert(
@@ -134,7 +151,42 @@ contract DeploymentScriptsTest is Test {
                 NetworkConfigScript.ContractCodeMissing.selector, network.name, "EtherdocReceiver", network.receiver
             )
         );
-        s_receiverHarness.deployOrReuse(network, address(this), address(this));
+        s_receiverHarness.deployOrReuse(network, source, address(this), address(this));
+    }
+
+    function test_receiverDeploymentRejectsDifferentCanonicalOrigin() external {
+        NetworkConfigScript.NetworkConfig memory network = _network();
+        NetworkConfigScript.NetworkConfig memory source = _network();
+        source.sender = makeAddr("source-sender");
+        (EtherdocReceiver receiver,) = s_receiverHarness.deployOrReuse(network, source, address(this), address(this));
+        network.receiver = address(receiver);
+
+        source.chainSelector++;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NetworkConfigScript.DeploymentValueMismatch.selector,
+                network.name,
+                "EtherdocReceiver",
+                "sourceChainSelector",
+                source.chainSelector,
+                receiver.getSourceChainSelector()
+            )
+        );
+        s_receiverHarness.deployOrReuse(network, source, address(this), address(this));
+
+        source.chainSelector = receiver.getSourceChainSelector();
+        source.chainId++;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NetworkConfigScript.DeploymentValueMismatch.selector,
+                network.name,
+                "EtherdocReceiver",
+                "sourceChainId",
+                source.chainId,
+                receiver.getSourceChainId()
+            )
+        );
+        s_receiverHarness.deployOrReuse(network, source, address(this), address(this));
     }
 
     function test_remoteConfigurationDetectsNoOpAndDrift() external {
@@ -144,20 +196,48 @@ contract DeploymentScriptsTest is Test {
 
         (EtherdocSender sender,) =
             s_senderHarness.deployOrReuse(source, address(this), address(this), address(this), address(this));
-        (EtherdocReceiver receiver,) = s_receiverHarness.deployOrReuse(destination, address(this), address(this));
         source.sender = address(sender);
+        (EtherdocReceiver receiver,) =
+            s_receiverHarness.deployOrReuse(destination, source, address(this), address(this));
         destination.receiver = address(receiver);
 
         assertFalse(s_remoteConfigurationHarness.remoteMatches(sender, destination));
-        assertFalse(s_remoteConfigurationHarness.trustedRemoteMatches(receiver, source));
+        assertTrue(s_remoteConfigurationHarness.trustedRemoteMatches(receiver, source));
 
         sender.configureRemote(destination.chainSelector, destination.receiver, destination.gasLimit, true);
-        receiver.configureTrustedRemote(source.chainSelector, source.sender, true);
         assertTrue(s_remoteConfigurationHarness.remoteMatches(sender, destination));
         assertTrue(s_remoteConfigurationHarness.trustedRemoteMatches(receiver, source));
+        s_remoteConfigurationHarness.requireReceiverOrigin(receiver, source, destination);
 
         destination.gasLimit++;
         assertFalse(s_remoteConfigurationHarness.remoteMatches(sender, destination));
+
+        source.chainSelector++;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NetworkConfigScript.DeploymentValueMismatch.selector,
+                destination.name,
+                "EtherdocReceiver",
+                "sourceChainSelector",
+                source.chainSelector,
+                receiver.getSourceChainSelector()
+            )
+        );
+        s_remoteConfigurationHarness.requireReceiverOrigin(receiver, source, destination);
+
+        source.chainSelector = receiver.getSourceChainSelector();
+        source.chainId++;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NetworkConfigScript.DeploymentValueMismatch.selector,
+                destination.name,
+                "EtherdocReceiver",
+                "sourceChainId",
+                source.chainId,
+                receiver.getSourceChainId()
+            )
+        );
+        s_remoteConfigurationHarness.requireReceiverOrigin(receiver, source, destination);
     }
 
     function test_treasuryTargetsAreIdempotent() external view {

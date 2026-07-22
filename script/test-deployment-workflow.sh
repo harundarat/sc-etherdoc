@@ -72,10 +72,10 @@ common_environment=(
 )
 wallet_options=(--unlocked --sender "$deployer")
 
-env "${common_environment[@]}" NETWORK=localDestination \
-  bash script/deploy-contract.sh receiver "${wallet_options[@]}"
 env "${common_environment[@]}" NETWORK=localSource \
   bash script/deploy-contract.sh sender "${wallet_options[@]}"
+env "${common_environment[@]}" NETWORK=localDestination SOURCE_NETWORK=localSource \
+  bash script/deploy-contract.sh receiver "${wallet_options[@]}"
 
 for role_and_network in "receiver localDestination" "sender localSource"; do
   read -r role network <<<"$role_and_network"
@@ -94,10 +94,10 @@ for role_and_network in "receiver localDestination" "sender localSource"; do
 done
 
 nonce_before_deploy_rerun="$(cast nonce --rpc-url "$rpc_url" "$deployer")"
-env "${common_environment[@]}" NETWORK=localDestination \
-  bash script/deploy-contract.sh receiver "${wallet_options[@]}"
 env "${common_environment[@]}" NETWORK=localSource \
   bash script/deploy-contract.sh sender "${wallet_options[@]}"
+env "${common_environment[@]}" NETWORK=localDestination SOURCE_NETWORK=localSource \
+  bash script/deploy-contract.sh receiver "${wallet_options[@]}"
 nonce_after_deploy_rerun="$(cast nonce --rpc-url "$rpc_url" "$deployer")"
 if [[ "$nonce_after_deploy_rerun" != "$nonce_before_deploy_rerun" ]]; then
   echo "Idempotent deployment rerun changed the deployer nonce" >&2

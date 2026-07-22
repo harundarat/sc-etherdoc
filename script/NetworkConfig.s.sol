@@ -42,6 +42,9 @@ abstract contract NetworkConfigScript is Script {
     error DeploymentDependencyMismatch(
         string network, string contractRole, string dependency, address expected, address actual
     );
+    error DeploymentValueMismatch(
+        string network, string contractRole, string dependency, uint256 expected, uint256 actual
+    );
     error UnsupportedFeeMode(string network, FeeMode feeMode);
     error UnsafeProductionGovernance(string network, GovernanceMode governanceMode);
     error MultisigGovernanceCodeMissing(string network, address governance);

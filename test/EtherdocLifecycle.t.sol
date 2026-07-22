@@ -33,9 +33,13 @@ contract EtherdocLifecycleTest is Test {
         s_sender = new EtherdocSender(
             address(s_router), address(s_link), address(this), address(this), address(this), address(this)
         );
-        s_receiverA = new EtherdocReceiver(address(s_router), address(this), address(this));
-        s_receiverB = new EtherdocReceiver(address(s_router), address(this), address(this));
         s_sourceChainSelector = s_router.SOURCE_CHAIN_SELECTOR();
+        s_receiverA = new EtherdocReceiver(
+            address(s_router), address(this), address(this), s_sourceChainSelector, block.chainid, address(0xDEAD)
+        );
+        s_receiverB = new EtherdocReceiver(
+            address(s_router), address(this), address(this), s_sourceChainSelector, block.chainid, address(0xDEAD)
+        );
 
         assertTrue(s_link.transfer(address(s_sender), 100 ether));
         s_sender.configureRemote(DESTINATION_A, address(s_receiverA), 500_000, true);
@@ -89,7 +93,7 @@ contract EtherdocLifecycleTest is Test {
         assertEq(uint8(failedReceipt.status), uint8(EtherdocReceiver.ReceiptStatus.NOT_RECEIVED));
         assertFalse(s_receiverA.isMessageProcessed(messageId));
 
-        s_receiverA.configureTrustedRemote(s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender), true);
+        s_receiverA.setTrustedSender(address(s_sender));
         vm.warp(block.timestamp + 15);
         vm.expectEmit(true, false, false, true);
         emit DeferredRouter.ExecutionAttempted(messageId, DeferredRouter.ExecutionState.SUCCESS, "");
@@ -136,7 +140,7 @@ contract EtherdocLifecycleTest is Test {
         assertTrue(s_receiverA.isDocumentReceived(s_documentId));
     }
 
-    function test_receiverPauserCannotUnpauseOrChangeTrustedRemote() external {
+    function test_receiverPauserCannotUnpauseOrChangeTrustedSender() external {
         address pauser = makeAddr("receiver-pauser");
         s_receiverA.setPauser(pauser, true);
 
@@ -149,7 +153,7 @@ contract EtherdocLifecycleTest is Test {
 
         vm.prank(pauser);
         vm.expectRevert(bytes("Only callable by owner"));
-        s_receiverA.configureTrustedRemote(s_sourceChainSelector, address(s_sender), true);
+        s_receiverA.setTrustedSender(address(s_sender));
 
         s_receiverA.unpauseReceive();
     }
@@ -246,6 +250,15 @@ contract EtherdocLifecycleTest is Test {
         assertEq(uint8(receipt.document.status), uint8(EtherdocTypes.DocumentStatus.REVOKED));
         assertTrue(s_receiverA.isMessageProcessed(activeMessageId));
         assertTrue(s_receiverA.isMessageProcessed(revokedMessageId));
+
+        EtherdocReceiver.ProcessedMessage memory activeMessage = s_receiverA.getProcessedMessage(activeMessageId);
+        assertEq(activeMessage.documentId, s_documentId);
+        assertEq(activeMessage.documentVersion, 1);
+        assertTrue(activeMessage.processed);
+
+        vm.expectEmit(true, true, false, true);
+        emit EtherdocReceiver.MessageIgnored(activeMessageId, s_documentId, 1, 2, true);
+        s_router.deliver(activeMessageId);
     }
 
     function test_supersessionPayloadLinksBothRecordsWithExplicitOperations() external {
@@ -352,58 +365,41 @@ contract EtherdocLifecycleTest is Test {
         assertFalse(s_receiverA.isMessageProcessed(metadataMessageId));
     }
 
-    function test_trustedRemotePairsDoNotAllowCrossProduct() external {
-        uint64 sourceA = 101;
-        uint64 sourceB = 202;
-        address senderX = makeAddr("sender-x");
-        address senderY = makeAddr("sender-y");
+    function test_receiverRejectsAnyNonCanonicalSelectorOrSender() external {
+        _allowReceiver(s_receiverA);
+        bytes32 wrongSelectorMessage = _queueDocument("wrong-selector");
+        bytes32 wrongSenderMessage = _queueDocument("wrong-sender");
+        uint64 wrongSelector = s_sourceChainSelector + 1;
+        address wrongSender = makeAddr("wrong-sender");
 
-        s_receiverA.configureTrustedRemote(sourceA, senderX, true);
-        s_receiverA.configureTrustedRemote(sourceB, senderY, true);
+        vm.expectRevert(
+            abi.encodeWithSelector(EtherdocReceiver.UntrustedRemote.selector, wrongSelector, address(s_sender))
+        );
+        s_router.deliverAs(wrongSelectorMessage, wrongSelector, address(s_sender));
 
-        bytes32 messageAX = _queueDocument("pair-a-x");
-        bytes32 messageBY = _queueDocument("pair-b-y");
-        bytes32 messageAY = _queueDocument("pair-a-y");
-        bytes32 messageBX = _queueDocument("pair-b-x");
+        vm.expectRevert(
+            abi.encodeWithSelector(EtherdocReceiver.UntrustedRemote.selector, s_sourceChainSelector, wrongSender)
+        );
+        s_router.deliverAs(wrongSenderMessage, s_sourceChainSelector, wrongSender);
 
-        s_router.deliverAs(messageAX, sourceA, senderX);
-        s_router.deliverAs(messageBY, sourceB, senderY);
-
-        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.UntrustedRemote.selector, sourceA, senderY));
-        s_router.deliverAs(messageAY, sourceA, senderY);
-
-        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.UntrustedRemote.selector, sourceB, senderX));
-        s_router.deliverAs(messageBX, sourceB, senderX);
-
-        assertTrue(s_receiverA.isTrustedRemote(sourceA, senderX));
-        assertTrue(s_receiverA.isTrustedRemote(sourceB, senderY));
-        assertFalse(s_receiverA.isTrustedRemote(sourceA, senderY));
-        assertFalse(s_receiverA.isTrustedRemote(sourceB, senderX));
+        assertTrue(s_receiverA.isTrustedRemote(s_sourceChainSelector, address(s_sender)));
+        assertFalse(s_receiverA.isTrustedRemote(wrongSelector, address(s_sender)));
+        assertFalse(s_receiverA.isTrustedRemote(s_sourceChainSelector, wrongSender));
     }
 
-    function test_configureTrustedRemoteEmitsEventAndCanRevokePair() external {
-        uint64 sourceChainSelector = 101;
-        address remoteSender = makeAddr("remote-sender");
-
+    function test_setTrustedSenderRotatesWithinImmutableSourceChain() external {
+        address previousSender = s_receiverA.getTrustedSender();
+        address remoteSender = makeAddr("rotated-sender");
         vm.expectEmit(true, true, false, true);
-        emit EtherdocReceiver.TrustedRemoteConfigured(sourceChainSelector, remoteSender, true);
-        s_receiverA.configureTrustedRemote(sourceChainSelector, remoteSender, true);
-        assertTrue(s_receiverA.isTrustedRemote(sourceChainSelector, remoteSender));
+        emit EtherdocReceiver.TrustedSenderUpdated(previousSender, remoteSender);
+        s_receiverA.setTrustedSender(remoteSender);
 
-        vm.expectEmit(true, true, false, true);
-        emit EtherdocReceiver.TrustedRemoteConfigured(sourceChainSelector, remoteSender, false);
-        s_receiverA.configureTrustedRemote(sourceChainSelector, remoteSender, false);
-        assertFalse(s_receiverA.isTrustedRemote(sourceChainSelector, remoteSender));
-    }
-
-    function test_configureTrustedRemoteRejectsInvalidPair() external {
-        uint64 sourceChainSelector = s_router.SOURCE_CHAIN_SELECTOR();
-
-        vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidSourceChainSelector.selector, uint64(0)));
-        s_receiverA.configureTrustedRemote(0, address(s_sender), true);
-
+        assertEq(s_receiverA.getSourceChainSelector(), s_sourceChainSelector);
+        assertEq(s_receiverA.getSourceChainId(), block.chainid);
+        assertEq(s_receiverA.getTrustedSender(), remoteSender);
+        assertTrue(s_receiverA.isTrustedRemote(s_sourceChainSelector, remoteSender));
         vm.expectRevert(abi.encodeWithSelector(EtherdocReceiver.InvalidRemoteSender.selector, address(0)));
-        s_receiverA.configureTrustedRemote(sourceChainSelector, address(0), true);
+        s_receiverA.setTrustedSender(address(0));
     }
 
     function test_receiverSupportsV1V2AndERC165Interfaces() external view {
@@ -428,7 +424,7 @@ contract EtherdocLifecycleTest is Test {
     }
 
     function _allowReceiver(EtherdocReceiver _receiver) private {
-        _receiver.configureTrustedRemote(s_router.SOURCE_CHAIN_SELECTOR(), address(s_sender), true);
+        _receiver.setTrustedSender(address(s_sender));
     }
 
     function _queueDocument(string memory _content) private returns (bytes32 messageId) {
