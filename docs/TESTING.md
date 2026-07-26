@@ -58,8 +58,8 @@ deployer nonce. It never broadcasts a transaction.
 The tests skip clearly when their corresponding RPC is absent:
 
 ```shell
+ETHEREUM_SEPOLIA_RPC_URL=<rpc-url> \
 MANTLE_SEPOLIA_RPC_URL=<rpc-url> \
-INK_SEPOLIA_RPC_URL=<rpc-url> \
   forge test --match-path test/CCIPV2Fork.t.sol -vv
 ```
 
@@ -71,25 +71,26 @@ The fork tests do not broadcast or require funded accounts.
 the repository variable `CCIP_E2E_ENABLED` is exactly `true`. Configure a protected
 `testnet-e2e` GitHub Environment with:
 
-- `MANTLE_SEPOLIA_RPC_URL` and `INK_SEPOLIA_RPC_URL`;
+- `ETHEREUM_SEPOLIA_RPC_URL` and `MANTLE_SEPOLIA_RPC_URL`;
 - `CCIP_E2E_ISSUER_PRIVATE_KEY`, a dedicated testnet-only issuer key;
 - `CCIP_E2E_OPERATOR_PRIVATE_KEY`, the distinct backend operator key;
-- `MANTLE_SEPOLIA_SENDER` and `INK_SEPOLIA_RECEIVER`.
+- `ETHEREUM_SEPOLIA_SENDER` and `MANTLE_SEPOLIA_RECEIVER`.
 
-Both dedicated accounts must have Mantle gas. The issuer must be authorized, the separate operator
-must hold `OPERATOR_ROLE`, and the sender must have enough LINK for four CCIP messages. The deployed
-receiver must already trust the Mantle selector/sender pair. The workflow fails before broadcasting
-if the roles are missing, the accounts are identical, or the trusted pair is wrong. It then:
+Both dedicated accounts must have Ethereum Sepolia gas. The issuer must be authorized, the separate
+operator must hold `OPERATOR_ROLE`, and the sender must have enough LINK for four CCIP messages. The
+deployed receiver must already trust the Ethereum selector/sender pair. The workflow fails before
+broadcasting if the roles are missing, the accounts are identical, or the trusted pair is wrong. It
+then:
 
 1. derives a unique raw CID from the workflow run and timestamp;
-2. registers the document on Mantle Sepolia;
+2. registers the document on Ethereum Sepolia;
 3. obtains a live quote, dispatches with a 25% fee ceiling buffer, and verifies the active source
    and destination records;
 4. supersedes the original, dispatches both the superseded version and active replacement, and
    verifies both destination states;
 5. revokes the replacement, dispatches its newest version, and verifies retained integrity with an
    inactive lifecycle state on both chains;
-6. extracts every indexed CCIP `messageId` from `MessageSent` and polls Ink Sepolia within one
+6. extracts every indexed CCIP `messageId` from `MessageSent` and polls Mantle Sepolia within one
    shared timeout.
 
 For local invocation, export the variables used by the workflow and run:

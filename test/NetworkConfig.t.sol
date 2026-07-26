@@ -77,27 +77,27 @@ contract NetworkConfigTest is Test {
     }
 
     function test_loadsEachSupportedChainFromJson() external view {
-        NetworkConfigScript.NetworkConfig memory source = s_harness.loadNetwork("mantleSepolia");
-        NetworkConfigScript.NetworkConfig memory destination = s_harness.loadNetwork("inkSepolia");
+        NetworkConfigScript.NetworkConfig memory source = s_harness.loadNetwork("ethereumSepolia");
+        NetworkConfigScript.NetworkConfig memory destination = s_harness.loadNetwork("mantleSepolia");
 
-        assertEq(source.name, "mantleSepolia");
-        assertEq(source.chainId, 5_003);
-        assertEq(source.chainSelector, 8_236_463_271_206_331_221);
+        assertEq(source.name, "ethereumSepolia");
+        assertEq(source.chainId, 11_155_111);
+        assertEq(source.chainSelector, 16_015_286_601_757_825_753);
         assertNotEq(source.router, address(0));
         assertNotEq(source.linkToken, address(0));
-        assertEq(source.rpcAlias, "mantle_sepolia");
+        assertEq(source.rpcAlias, "ethereum_sepolia");
         assertEq(source.gasLimit, 500_000);
         assertEq(uint8(source.feeMode), uint8(NetworkConfigScript.FeeMode.LINK));
         assertEq(uint8(source.governanceMode), uint8(NetworkConfigScript.GovernanceMode.DIRECT));
         assertFalse(source.production);
         assertEq(source.sender, address(0));
 
-        assertEq(destination.name, "inkSepolia");
-        assertEq(destination.chainId, 763_373);
-        assertEq(destination.chainSelector, 9_763_904_284_804_119_144);
+        assertEq(destination.name, "mantleSepolia");
+        assertEq(destination.chainId, 5_003);
+        assertEq(destination.chainSelector, 8_236_463_271_206_331_221);
         assertNotEq(destination.router, address(0));
         assertNotEq(destination.linkToken, address(0));
-        assertEq(destination.rpcAlias, "ink_sepolia");
+        assertEq(destination.rpcAlias, "mantle_sepolia");
         assertEq(destination.gasLimit, 500_000);
         assertEq(uint8(destination.governanceMode), uint8(NetworkConfigScript.GovernanceMode.DIRECT));
         assertFalse(destination.production);
@@ -228,10 +228,10 @@ contract NetworkConfigTest is Test {
     function test_configureRejectsMissingDeploymentAddress() external {
         vm.expectRevert(
             abi.encodeWithSelector(
-                NetworkConfigScript.DeploymentAddressMissing.selector, "inkSepolia", "EtherdocReceiver"
+                NetworkConfigScript.DeploymentAddressMissing.selector, "mantleSepolia", "EtherdocReceiver"
             )
         );
-        s_harness.requireDeployment(address(0), "inkSepolia", "EtherdocReceiver");
+        s_harness.requireDeployment(address(0), "mantleSepolia", "EtherdocReceiver");
     }
 
     function _network(string memory _name) private view returns (NetworkConfigScript.NetworkConfig memory network) {

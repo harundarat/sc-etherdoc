@@ -13,21 +13,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  mantle-to-ink:
+  ethereum-to-mantle:
     if: ${{ vars.CCIP_E2E_ENABLED == 'true' }}
-    name: Mantle Sepolia to Ink Sepolia
+    name: Ethereum Sepolia to Mantle Sepolia
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     environment: testnet-e2e
     env:
-      SOURCE_RPC_URL: ${{ secrets.MANTLE_SEPOLIA_RPC_URL }}
-      DESTINATION_RPC_URL: ${{ secrets.INK_SEPOLIA_RPC_URL }}
+      SOURCE_RPC_URL: ${{ secrets.ETHEREUM_SEPOLIA_RPC_URL }}
+      DESTINATION_RPC_URL: ${{ secrets.MANTLE_SEPOLIA_RPC_URL }}
       E2E_ISSUER_PRIVATE_KEY: ${{ secrets.CCIP_E2E_ISSUER_PRIVATE_KEY }}
       E2E_OPERATOR_PRIVATE_KEY: ${{ secrets.CCIP_E2E_OPERATOR_PRIVATE_KEY }}
-      ETHERDOC_SENDER: ${{ secrets.MANTLE_SEPOLIA_SENDER }}
-      ETHERDOC_RECEIVER: ${{ secrets.INK_SEPOLIA_RECEIVER }}
-      SOURCE_CHAIN_SELECTOR: "8236463271206331221"
-      DESTINATION_CHAIN_SELECTOR: "9763904284804119144"
+      ETHERDOC_SENDER: ${{ secrets.ETHEREUM_SEPOLIA_SENDER }}
+      ETHERDOC_RECEIVER: ${{ secrets.MANTLE_SEPOLIA_RECEIVER }}
+      SOURCE_CHAIN_SELECTOR: "16015286601757825753"
+      DESTINATION_CHAIN_SELECTOR: "8236463271206331221"
       E2E_TIMEOUT_SECONDS: "7200"
       E2E_POLL_SECONDS: "30"
     steps:

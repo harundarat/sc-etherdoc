@@ -18,8 +18,8 @@ import {CIDTestHelper} from "./utils/CIDTestHelper.sol";
 contract CCIPV2RouterHarness is IRouterClient {
     using SafeERC20 for IERC20;
 
-    uint64 public constant SOURCE_CHAIN_SELECTOR = 5_003;
-    uint64 public constant DESTINATION_CHAIN_SELECTOR = 763_373;
+    uint64 public constant SOURCE_CHAIN_SELECTOR = 16_015_286_601_757_825_753;
+    uint64 public constant DESTINATION_CHAIN_SELECTOR = 8_236_463_271_206_331_221;
     uint256 public constant FEE = 1 ether;
 
     IERC20 private immutable i_link;

@@ -44,14 +44,14 @@ Use an encrypted Foundry account or hardware wallet; do not put a production pri
 
 ```shell
 # Source sender
-NETWORK=mantleSepolia \
-RPC_URL="$MANTLE_SEPOLIA_RPC_URL" \
+NETWORK=ethereumSepolia \
+RPC_URL="$ETHEREUM_SEPOLIA_RPC_URL" \
   bash script/deploy-contract.sh sender --account deployer
 
 # Destination receiver, bound to the deployed canonical source
-NETWORK=inkSepolia \
-SOURCE_NETWORK=mantleSepolia \
-RPC_URL="$INK_SEPOLIA_RPC_URL" \
+NETWORK=mantleSepolia \
+SOURCE_NETWORK=ethereumSepolia \
+RPC_URL="$MANTLE_SEPOLIA_RPC_URL" \
   bash script/deploy-contract.sh receiver --account deployer
 ```
 
@@ -81,29 +81,29 @@ the source:
 
 ```shell
 # Destination reconciles a rotated source sender (normally a no-op after initial deployment)
-SOURCE_NETWORK=mantleSepolia \
-DESTINATION_NETWORK=inkSepolia \
+SOURCE_NETWORK=ethereumSepolia \
+DESTINATION_NETWORK=mantleSepolia \
 CONFIGURE_TARGET=RECEIVER \
   forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
-    --rpc-url ink_sepolia --broadcast --account governance
+    --rpc-url mantle_sepolia --broadcast --account governance
 
 # Source routes to destination receiver
-SOURCE_NETWORK=mantleSepolia \
-DESTINATION_NETWORK=inkSepolia \
+SOURCE_NETWORK=ethereumSepolia \
+DESTINATION_NETWORK=mantleSepolia \
 CONFIGURE_TARGET=SENDER \
   forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
-    --rpc-url mantle_sepolia --broadcast --account governance
+    --rpc-url ethereum_sepolia --broadcast --account governance
 ```
 
 For `MULTISIG`, omit `--broadcast` and wallet flags. The same commands perform local and remote
 bytecode preflight, then write Safe proposal JSON instead of impersonating the multisig:
 
 ```shell
-SOURCE_NETWORK=mantle \
-DESTINATION_NETWORK=ink \
+SOURCE_NETWORK=ethereum \
+DESTINATION_NETWORK=mantle \
 CONFIGURE_TARGET=SENDER \
   forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
-    --rpc-url "$MANTLE_RPC_URL"
+    --rpc-url "$ETHEREUM_RPC_URL"
 ```
 
 After Safe execution, rerun the command. It must report that the remote is already configured. The
@@ -117,23 +117,23 @@ Funding is expressed as a target sender balance, so concurrent deposits or rerun
 accidentally double the intended amount:
 
 ```shell
-NETWORK=mantleSepolia \
+NETWORK=ethereumSepolia \
 TREASURY_ACTION=FUND \
 TARGET_LINK_BALANCE=1000000000000000000 \
   forge script script/ManageEtherdocTreasury.s.sol:ManageEtherdocTreasuryScript \
-    --rpc-url mantle_sepolia --broadcast --account funder
+    --rpc-url ethereum_sepolia --broadcast --account funder
 ```
 
 Withdrawal is expressed as the balance that must remain. In direct mode governance broadcasts the
 call. In multisig mode the script creates a Safe proposal:
 
 ```shell
-NETWORK=mantleSepolia \
+NETWORK=ethereumSepolia \
 TREASURY_ACTION=WITHDRAW \
 RETAIN_LINK_BALANCE=500000000000000000 \
 TREASURY=0x... \
   forge script script/ManageEtherdocTreasury.s.sol:ManageEtherdocTreasuryScript \
-    --rpc-url mantle_sepolia --broadcast --account governance
+    --rpc-url ethereum_sepolia --broadcast --account governance
 ```
 
 Always choose the retained balance from pending message volume plus a documented safety buffer.
@@ -144,8 +144,8 @@ Verification reads the compiler settings, creation transaction, artifact, and co
 from the immutable deployment manifest:
 
 ```shell
-NETWORK=mantleSepolia \
-RPC_URL="$MANTLE_SEPOLIA_RPC_URL" \
+NETWORK=ethereumSepolia \
+RPC_URL="$ETHEREUM_SEPOLIA_RPC_URL" \
   bash script/verify-contract.sh sender
 ```
 

@@ -26,11 +26,11 @@ runs = 512
 depth = 500
 
 [rpc_endpoints]
+ethereum_sepolia = "${ETHEREUM_SEPOLIA_RPC_URL}"
 mantle_sepolia = "${MANTLE_SEPOLIA_RPC_URL}"
-ink_sepolia = "${INK_SEPOLIA_RPC_URL}"
 
 [etherscan]
+ethereum_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11155111 }
 mantle_sepolia = { key = "${MANTLESCAN_API_KEY}", chain = 5003 }
-ink_sepolia = { key = "${INKSCAN_API_KEY}", chain = 763373 }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

@@ -296,16 +296,16 @@ that message rather than sending a duplicate payload. Follow the
 
 ## Network configuration and deployment
 
-The checked-in example topology is Mantle Sepolia as source and Ink Sepolia as destination. Router,
-LINK, selector, gas, explorer, RPC alias, governance mode, and Directory verification timestamp are
-read from [`config/networks/testnet.json`](config/networks/testnet.json); scripts contain no embedded
-network addresses.
+The checked-in example topology is Ethereum Sepolia as source and Mantle Sepolia as destination.
+Router, LINK, selector, gas, explorer, RPC alias, governance mode, and Directory verification
+timestamp are read from [`config/networks/testnet.json`](config/networks/testnet.json); scripts
+contain no embedded network addresses.
 
 The example is not a published Etherdoc deployment. CCIP lane support can change, so revalidate both
 official Directory entries before a production-like deployment:
 
+- [Ethereum Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia)
 - [Mantle Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ethereum-testnet-sepolia-mantle-1)
-- [Ink Sepolia CCIP configuration](https://docs.chain.link/ccip/directory/testnet/chain/ink-testnet-sepolia)
 
 Record the completed check by updating `directoryVerifiedAt` in the network config.
 
@@ -328,32 +328,32 @@ deployed sender from `SOURCE_NETWORK`.
 Deploy the source first, then the destination from a clean, committed worktree:
 
 ```shell
-NETWORK=mantleSepolia RPC_URL="$MANTLE_SEPOLIA_RPC_URL" \
+NETWORK=ethereumSepolia RPC_URL="$ETHEREUM_SEPOLIA_RPC_URL" \
   bash script/deploy-contract.sh sender --account deployer
 
-NETWORK=inkSepolia SOURCE_NETWORK=mantleSepolia RPC_URL="$INK_SEPOLIA_RPC_URL" \
+NETWORK=mantleSepolia SOURCE_NETWORK=ethereumSepolia RPC_URL="$MANTLE_SEPOLIA_RPC_URL" \
   bash script/deploy-contract.sh receiver --account deployer
 ```
 
 Then configure both sides of the lane:
 
 ```shell
-SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia CONFIGURE_TARGET=RECEIVER \
-  forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
-    --rpc-url ink_sepolia --broadcast --account governance
-
-SOURCE_NETWORK=mantleSepolia DESTINATION_NETWORK=inkSepolia CONFIGURE_TARGET=SENDER \
+SOURCE_NETWORK=ethereumSepolia DESTINATION_NETWORK=mantleSepolia CONFIGURE_TARGET=RECEIVER \
   forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
     --rpc-url mantle_sepolia --broadcast --account governance
+
+SOURCE_NETWORK=ethereumSepolia DESTINATION_NETWORK=mantleSepolia CONFIGURE_TARGET=SENDER \
+  forge script script/ConfigureEtherdocRemotes.s.sol:ConfigureEtherdocRemotesScript \
+    --rpc-url ethereum_sepolia --broadcast --account governance
 ```
 
 Fund the sender to a target LINK balance before dispatch:
 
 ```shell
-NETWORK=mantleSepolia TREASURY_ACTION=FUND \
+NETWORK=ethereumSepolia TREASURY_ACTION=FUND \
 TARGET_LINK_BALANCE="$TARGET_LINK_BALANCE" \
   forge script script/ManageEtherdocTreasury.s.sol:ManageEtherdocTreasuryScript \
-    --rpc-url mantle_sepolia --broadcast --account funder
+    --rpc-url ethereum_sepolia --broadcast --account funder
 ```
 
 Deployment runs create receipt-backed address books and manifests under `deployments/`. Reruns
@@ -388,8 +388,8 @@ Provide both testnet RPC URLs to exercise both directions of the optional fork c
 broadcast:
 
 ```shell
+ETHEREUM_SEPOLIA_RPC_URL=<rpc-url> \
 MANTLE_SEPOLIA_RPC_URL=<rpc-url> \
-INK_SEPOLIA_RPC_URL=<rpc-url> \
   forge test --match-path test/CCIPV2Fork.t.sol -vv
 ```
 

@@ -1,5 +1,18 @@
 {
   "networks": {
+    "ethereumSepolia": {
+      "chainId": 11155111,
+      "chainSelector": 16015286601757825753,
+      "router": "0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59",
+      "linkToken": "0x779877A7B0D9E8603169DdbD7836e478b4624789",
+      "explorer": "https://sepolia.etherscan.io",
+      "rpcAlias": "ethereum_sepolia",
+      "gasLimit": 500000,
+      "feeMode": "LINK",
+      "governanceMode": "DIRECT",
+      "production": false,
+      "directoryVerifiedAt": 1785058991
+    },
     "mantleSepolia": {
       "chainId": 5003,
       "chainSelector": 8236463271206331221,
@@ -11,20 +24,7 @@
       "feeMode": "LINK",
       "governanceMode": "DIRECT",
       "production": false,
-      "directoryVerifiedAt": 1784419200
-    },
-    "inkSepolia": {
-      "chainId": 763373,
-      "chainSelector": 9763904284804119144,
-      "router": "0x17fCda531D8E43B4e2a2A2492FBcd4507a1685A1",
-      "linkToken": "0x3423C922911956b1Ccbc2b5d4f38216a6f4299b4",
-      "explorer": "https://explorer-sepolia.inkonchain.com",
-      "rpcAlias": "ink_sepolia",
-      "gasLimit": 500000,
-      "feeMode": "LINK",
-      "governanceMode": "DIRECT",
-      "production": false,
-      "directoryVerifiedAt": 1784419200
+      "directoryVerifiedAt": 1785058991
     }
   }
 }
