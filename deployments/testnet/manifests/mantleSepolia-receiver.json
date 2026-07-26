@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "network": "mantleSepolia",
+  "role": "receiver",
+  "contractName": "EtherdocReceiver",
+  "artifact": "src/EtherdocReceiver.sol:EtherdocReceiver",
+  "address": "0xAab5e5dA0b2C6E89D64B188df4dB18D655D629e7",
+  "chainId": 5003,
+  "chainSelector": "8236463271206331221",
+  "transactionHash": "0x68c4cd2052ca66ae21d5b084ac197aee9f93619c42349cc931af2221f7913e9f",
+  "blockNumber": 41758817,
+  "timestamp": 1785062307,
+  "deployer": "0x6aefe6b1253e04f61f8378d41d6790aa46e07c8f",
+  "runtimeCodeHash": "0xf6d7a933eb65676f6ec3bc6d6eb50307f58994649157f010a675646f2f518531",
+  "source": {
+    "gitCommit": "b132bf4360108db00959fc5aa75009a12283ed69",
+    "gitDirty": false
+  },
+  "compiler": {
+    "version": "0.8.36+commit.8a079791",
+    "evmVersion": "paris",
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    }
+  },
+  "constructorArgs": {
+    "values": [
+      "0xFd33fd627017fEf041445FC19a2B6521C9778f86",
+      "0x6AeFe6b1253E04f61f8378D41d6790AA46e07c8F",
+      "0x6AeFe6b1253E04f61f8378D41d6790AA46e07c8F",
+      "16015286601757825753",
+      "11155111",
+      "0xAab5e5dA0b2C6E89D64B188df4dB18D655D629e7"
+    ],
+    "encoded": "0x000000000000000000000000fd33fd627017fef041445fc19a2b6521c9778f860000000000000000000000006aefe6b1253e04f61f8378d41d6790aa46e07c8f0000000000000000000000006aefe6b1253e04f61f8378d41d6790aa46e07c8f000000000000000000000000000000000000000000000000de41ba4fc9d91ad90000000000000000000000000000000000000000000000000000000000aa36a7000000000000000000000000aab5e5da0b2c6e89d64b188df4db18d655d629e7"
+  },
+  "manifestGeneratedAt": 1785062309
+}

@@ -13,6 +13,10 @@ broadcast
 
 # Generated deployment address books
 deployments/**/*.json
+!deployments/testnet/ethereumSepolia.json
+!deployments/testnet/mantleSepolia.json
+!deployments/testnet/manifests/ethereumSepolia-sender.json
+!deployments/testnet/manifests/mantleSepolia-receiver.json
 proposals/
 
 # VSCode Extension

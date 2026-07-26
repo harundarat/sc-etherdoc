@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "network": "ethereumSepolia",
+  "role": "sender",
+  "contractName": "EtherdocSender",
+  "artifact": "src/EtherdocSender.sol:EtherdocSender",
+  "address": "0xAab5e5dA0b2C6E89D64B188df4dB18D655D629e7",
+  "chainId": 11155111,
+  "chainSelector": "16015286601757825753",
+  "transactionHash": "0x3a24898943d7daccab82e3148e160bbaa19d4eb9811439634d77b11da66acfee",
+  "blockNumber": 11354109,
+  "timestamp": 1785062256,
+  "deployer": "0x6aefe6b1253e04f61f8378d41d6790aa46e07c8f",
+  "runtimeCodeHash": "0x7fdd145e13ac74986afae4df105d091429fa4342b237df13133c6e6d2dcb339e",
+  "source": {
+    "gitCommit": "b132bf4360108db00959fc5aa75009a12283ed69",
+    "gitDirty": false
+  },
+  "compiler": {
+    "version": "0.8.36+commit.8a079791",
+    "evmVersion": "paris",
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    }
+  },
+  "constructorArgs": {
+    "values": [
+      "0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59",
+      "0x779877A7B0D9E8603169DdbD7836e478b4624789",
+      "0x6AeFe6b1253E04f61f8378D41d6790AA46e07c8F",
+      "0xB34a4eAECB848d573a0410bc305787d5B69328B8",
+      "0x0f70A38610bbdcE47f6fc7AD6C4b1E5A6C68b62A",
+      "0x6AeFe6b1253E04f61f8378D41d6790AA46e07c8F"
+    ],
+    "encoded": "0x0000000000000000000000000bf3de8c5d3e8a2b34d2beeb17abfcebaf363a59000000000000000000000000779877a7b0d9e8603169ddbd7836e478b46247890000000000000000000000006aefe6b1253e04f61f8378d41d6790aa46e07c8f000000000000000000000000b34a4eaecb848d573a0410bc305787d5b69328b80000000000000000000000000f70a38610bbdce47f6fc7ad6c4b1e5a6c68b62a0000000000000000000000006aefe6b1253e04f61f8378d41d6790aa46e07c8f"
+  },
+  "manifestGeneratedAt": 1785062258
+}
