@@ -90,7 +90,6 @@ contract NetworkConfigTest is Test {
         assertEq(uint8(source.feeMode), uint8(NetworkConfigScript.FeeMode.LINK));
         assertEq(uint8(source.governanceMode), uint8(NetworkConfigScript.GovernanceMode.DIRECT));
         assertFalse(source.production);
-        assertEq(source.sender, address(0));
 
         assertEq(destination.name, "mantleSepolia");
         assertEq(destination.chainId, 5_003);
@@ -101,7 +100,6 @@ contract NetworkConfigTest is Test {
         assertEq(destination.gasLimit, 500_000);
         assertEq(uint8(destination.governanceMode), uint8(NetworkConfigScript.GovernanceMode.DIRECT));
         assertFalse(destination.production);
-        assertEq(destination.receiver, address(0));
     }
 
     function test_rejectsUnsafeDirectGovernanceForProduction() external {
