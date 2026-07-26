@@ -14,8 +14,8 @@ Etherdoc separates deterministic PR checks from tests that depend on live networ
 - local multichain tests use Router harnesses and never depend on an RPC;
 - optional fork tests verify current Router/LINK bytecode, lane support, and ExtraArgs V3 quotes in
   both directions;
-- the scheduled testnet E2E workflow registers a unique document, dispatches it, and polls the
-  destination receipt. It is deliberately separate from PR CI.
+- the scheduled testnet E2E workflow exercises a unique document through registration,
+  supersession, revocation, and versioned CCIP delivery. It is deliberately separate from PR CI.
 
 ## Local commands
 
@@ -72,19 +72,25 @@ the repository variable `CCIP_E2E_ENABLED` is exactly `true`. Configure a protec
 `testnet-e2e` GitHub Environment with:
 
 - `MANTLE_SEPOLIA_RPC_URL` and `INK_SEPOLIA_RPC_URL`;
-- `CCIP_E2E_PRIVATE_KEY`, a dedicated testnet-only key;
+- `CCIP_E2E_ISSUER_PRIVATE_KEY`, a dedicated testnet-only issuer key;
+- `CCIP_E2E_OPERATOR_PRIVATE_KEY`, the distinct backend operator key;
 - `MANTLE_SEPOLIA_SENDER` and `INK_SEPOLIA_RECEIVER`.
 
-The dedicated account must have Mantle gas, be an authorized issuer and operator, while the sender
-must have enough LINK. The deployed receiver must already trust the Mantle selector/sender pair.
-The workflow fails before broadcasting if those roles or the trusted pair are missing. It then:
+Both dedicated accounts must have Mantle gas. The issuer must be authorized, the separate operator
+must hold `OPERATOR_ROLE`, and the sender must have enough LINK for four CCIP messages. The deployed
+receiver must already trust the Mantle selector/sender pair. The workflow fails before broadcasting
+if the roles are missing, the accounts are identical, or the trusted pair is wrong. It then:
 
 1. derives a unique raw CID from the workflow run and timestamp;
 2. registers the document on Mantle Sepolia;
-3. obtains a live quote and dispatches with a 25% fee ceiling buffer;
-4. extracts the indexed CCIP `messageId` from `MessageSent`;
-5. polls Ink Sepolia for up to 45 minutes and verifies that the message resolves to the expected
-   document ID.
+3. obtains a live quote, dispatches with a 25% fee ceiling buffer, and verifies the active source
+   and destination records;
+4. supersedes the original, dispatches both the superseded version and active replacement, and
+   verifies both destination states;
+5. revokes the replacement, dispatches its newest version, and verifies retained integrity with an
+   inactive lifecycle state on both chains;
+6. extracts every indexed CCIP `messageId` from `MessageSent` and polls Ink Sepolia within one
+   shared timeout.
 
 For local invocation, export the variables used by the workflow and run:
 
